@@ -3,6 +3,8 @@
 # End-to-end coordinator for the Wind-Weighted AOD Transport Efficiency (WWTE) pipeline.
 # Runs both the spatial transport calculation and the premium geospatial visualizer.
 #
+# Author: Hossein Lotfi — Research Scientist
+#
 # How to run:
 # python main.py
 #
@@ -61,13 +63,13 @@ def main() -> None:
     pipeline_start = time.time()
     
     # 1. Run final spatial transport analysis
-    analysis_script = os.path.join("resources", "wwte_aod_index_analysis_final.py")
+    analysis_script = os.path.join("resources", "wwte_aod_index_analysis.py")
     if not run_script(analysis_script):
         print("\n❌ Pipeline aborted: Spatial analysis stage failed.")
         sys.exit(1)
         
     # 2. Run advanced plotting script
-    plotting_script = os.path.join("resources", "plot_climatology_final.py")
+    plotting_script = os.path.join("resources", "plot_climatology.py")
     if not run_script(plotting_script):
         print("\n❌ Pipeline aborted: Plotting stage failed.")
         sys.exit(1)

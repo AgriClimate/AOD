@@ -1,6 +1,6 @@
 # WWTE – Wind-Weighted AOD Transport Efficiency Model
 
-**Version: v1.3**
+**Version: v1.3** | **Author: Hossein Lotfi** — Research Scientist
 
 > A geospatial analysis pipeline that quantifies the contribution of regional dust sources to aerosol loading at a designated sink location, using satellite-derived AOD, ERA5 reanalysis winds, and hotspot classification masks.
 
@@ -79,18 +79,16 @@ AOD/
 │
 ├── resources/                       # Core scripts and configuration
 │   ├── config.json                  # Central pipeline configuration
-│   ├── wwte_aod_index_analysis_final.py   # WWTE scoring engine (OOP)
-│   ├── plot_climatology_final.py          # Advanced 3-panel visualizer (OOP)
-│   ├── wwte_aod_index_analysis.py         # Legacy scoring script
-│   ├── plot_climatology.py                # Legacy plotting script
-│   ├── plot_score_omega.py                # Standalone score/omega plotter
-│   ├── calculate_climatology.py           # Climatology calculator utility
-│   ├── download_aod_neo.py                # NASA NEO AOD downloader
-│   ├── download_era5_wind.py              # ERA5 wind downloader (general)
-│   ├── download_all_wind_10m.py           # ERA5 10m wind batch downloader
-│   ├── download_all_wind_850.py           # ERA5 850 hPa wind batch downloader
-│   ├── download_ndvi_neo.py               # NDVI data downloader
-│   └── analyze_ndvi.py                    # NDVI analysis utility
+│   ├── wwte_aod_index_analysis.py   # WWTE scoring engine (OOP)
+│   ├── plot_climatology.py          # Advanced 3-panel visualizer (OOP)
+│   ├── plot_score_omega.py          # Standalone score/omega plotter
+│   ├── calculate_climatology.py     # Climatology calculator utility
+│   ├── download_aod_neo.py          # NASA NEO AOD downloader
+│   ├── download_era5_wind.py        # ERA5 wind downloader (general)
+│   ├── download_all_wind_10m.py     # ERA5 10m wind batch downloader
+│   ├── download_all_wind_850.py     # ERA5 850 hPa wind batch downloader
+│   ├── download_ndvi_neo.py         # NDVI data downloader
+│   └── analyze_ndvi.py              # NDVI analysis utility
 │
 ├── inputs/                          # Input datasets (not tracked in git)
 │   ├── ERA5_Wind/                   # ERA5 monthly wind NetCDF files
@@ -203,12 +201,12 @@ python main.py
 
 This executes two stages sequentially:
 
-1. **Stage 1 — Spatial Analysis** (`wwte_aod_index_analysis_final.py`)
+1. **Stage 1 — Spatial Analysis** (`wwte_aod_index_analysis.py`)
    - Loads AOD, wind, and hotspot data for each month
    - Computes WWTE scores on a uniform grid
    - Exports monthly and climatological NetCDF files + CSV summary
 
-2. **Stage 2 — Visualization** (`plot_climatology_final.py`)
+2. **Stage 2 — Visualization** (`plot_climatology.py`)
    - Reads the climatology NetCDF
    - Generates 12 monthly 3-panel maps (Score, Omega, Score×Omega)
 
@@ -216,10 +214,10 @@ This executes two stages sequentially:
 
 ```bash
 # Analysis only
-python resources/wwte_aod_index_analysis_final.py
+python resources/wwte_aod_index_analysis.py
 
 # Plotting only (requires NetCDF outputs from analysis)
-python resources/plot_climatology_final.py
+python resources/plot_climatology.py
 ```
 
 ### Download Input Data
@@ -295,7 +293,7 @@ Each map contains three panels:
 ```
 main.py
   │
-  ├──▶ resources/wwte_aod_index_analysis_final.py
+  ├──▶ resources/wwte_aod_index_analysis.py
   │     ├── ConfigManager          — Loads config.json, geocodes sink location
   │     ├── WWTEGeospatialEngine   — Haversine distance, bearing vectors
   │     └── WWTEPipeline           — Orchestrates loading, scoring, and export
@@ -303,7 +301,7 @@ main.py
   │           ├── run_spatial_analysis()
   │           └── export_results()
   │
-  └──▶ resources/plot_climatology_final.py
+  └──▶ resources/plot_climatology.py
         ├── VisualizerConfig            — Typed configuration container
         ├── GeospatialBoundaryManager   — Loads country/province boundaries
         ├── WWTEGeospatialEngine        — Recomputes Score, Omega, Score×Omega
@@ -320,7 +318,7 @@ main.py
 | Version | Date | Changes |
 |---|---|---|
 | **v1.3** | 2025-05-21 | Output NetCDF uses `lat`/`lon` dimensions (CF-compliant); added proprietary licence; restructured folders to `inputs/`, `outputs/`, `resources/`; added `main.py` pipeline coordinator |
-| **v1.2** | — | Advanced OOP-based plotting engine (`plot_climatology_final.py`); 3-panel Score/Omega/Score×Omega maps; discrete quantile colormaps |
+| **v1.2** | — | Advanced OOP-based plotting engine (`plot_climatology.py`); 3-panel Score/Omega/Score×Omega maps; discrete quantile colormaps |
 | **v1.1** | — | Added 850 hPa wind support; geocoding for sink location; source country masking; distance decay scoring |
 | **v1.0** | — | Initial WWTE pipeline with 10 m wind, AOD loading, basic transport scoring, and CSV export |
 
@@ -331,3 +329,11 @@ main.py
 This project is under a **proprietary license**. See [`licence/LICENSE.txt`](licence/LICENSE.txt).
 
 > **⚠️ No research or publication use is permitted.** Only authorized developers may use, modify, or distribute this code. Written consent is required for any external use.
+
+---
+
+## Author
+
+**Hossein Lotfi** — Research Scientist
+
+© 2025 Hossein Lotfi, Development Team. All rights reserved.

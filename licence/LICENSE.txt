@@ -1,13 +1,84 @@
-Proprietary License – No Publication or Research Use
+PROPRIETARY SOFTWARE LICENSE
+Version 1.0 — Effective Date: 2025
 
-This software and its associated source code are the exclusive property of the development team. Use of this code is strictly limited to the developers and authorized personnel.
+Copyright (c) 2025 Hossein Lotfi, Development Team.
+All rights reserved.
 
-**Restrictions:**
-- You may NOT use, copy, modify, or distribute this code for the purpose of publishing academic papers, articles, or any form of scholarly work.
-- You may NOT employ this code for any research activities, including but not limited to data analysis, model training, or experimentation.
-- Unauthorized distribution, sublicensing, or public sharing of any part of this repository is prohibited.
+================================================================================
+                          ALL RIGHTS RESERVED
+================================================================================
 
-**Permission:**
-Only the named developers have explicit permission to use, modify, and distribute this code within the scope of the project. All other parties must obtain written consent from the developers before any use.
+This software, including all source code, documentation, data, algorithms,
+methodologies, and associated materials (collectively, the "Software"), is the
+exclusive intellectual property of the development team (the
+"Developers").
 
-Violation of these terms may result in legal action.
+1. NO LICENSE GRANTED
+
+   No license, right, or permission of any kind is granted to any person or
+   entity other than the Developers. Access to this repository does NOT
+   constitute a grant of any license or right to use, copy, modify, merge,
+   publish, distribute, sublicense, sell, or otherwise exploit the Software.
+
+2. PROHIBITED ACTIVITIES
+
+   Without the prior written consent of the Developers, you may NOT:
+
+   a) Use this Software for any purpose whatsoever, including but not limited
+      to personal, academic, commercial, governmental, or non-profit use.
+
+   b) Copy, reproduce, or duplicate any portion of the Software.
+
+   c) Modify, adapt, translate, reverse-engineer, decompile, disassemble, or
+      create derivative works based on the Software.
+
+   d) Publish, distribute, sublicense, lease, lend, sell, or otherwise
+      transfer the Software or any portion thereof to any third party.
+
+   e) Use the Software, its outputs, algorithms, or methodologies to publish
+      academic papers, journal articles, conference proceedings, theses,
+      dissertations, reports, or any form of scholarly or scientific work.
+
+   f) Use the Software for research activities, including but not limited to
+      data analysis, model development, model training, experimentation,
+      benchmarking, or validation studies.
+
+   g) Incorporate the Software or any portion thereof into other software,
+      systems, products, or services.
+
+   h) Remove, alter, or obscure this license notice or any proprietary
+      markings from the Software.
+
+3. AUTHORIZED USE
+
+   The following named Developer(s) are authorized to use, modify, and
+   execute the Software:
+
+     - Hossein Lotfi (Research Scientist)
+
+   Additional individuals may be authorized only through explicit written
+   consent from the Developer(s) listed above. Authorized use is limited
+   solely to the scope of the project for which the Software was developed.
+
+4. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+5. ENFORCEMENT
+
+   Any unauthorized use, reproduction, or distribution of this Software
+   constitutes a violation of this license and may result in civil and/or
+   criminal penalties. The Developers reserve the right to pursue all
+   available legal remedies.
+
+6. GOVERNING LAW
+
+   This license shall be governed by and construed in accordance with
+   applicable intellectual property laws.
+
+================================================================================
+Developer:  Hossein Lotfi — Research Scientist
+Contact:    For licensing inquiries, contact [agri.meteo@gmail.com]
+================================================================================
