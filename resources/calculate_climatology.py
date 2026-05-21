@@ -36,7 +36,7 @@ def main() -> None:
     and saves the consolidated climatology dataset to disk.
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(base_dir, 'resources', 'config.json')
+    config_path = os.path.join(base_dir, 'config', 'config.json')
     
     with open(config_path, 'r') as f:
         config = json.load(f)

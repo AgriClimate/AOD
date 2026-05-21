@@ -59,7 +59,7 @@ def load_bounding_box() -> dict[str, float]:
         dict[str, float]: Bounding box coordinates with keys 'min_lon', 'max_lon', 'min_lat', 'max_lat'.
     """
     try:
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
         with open(config_path, 'r') as f:
             config = json.load(f)
         return config['parameters']['bounding_box']

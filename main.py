@@ -13,6 +13,7 @@ import os
 import sys
 import subprocess
 import time
+import json
 
 def run_script(script_path: str) -> bool:
     """
@@ -56,8 +57,17 @@ def main() -> None:
     """
     Main entry point coordinates both analysis and plotting components end-to-end.
     """
+    config_path = os.path.join("config", "config.json")
+    wind_banner = "unknown"
+    try:
+        with open(config_path, "r") as f:
+            cfg = json.load(f)
+        wind_banner = str(cfg.get("active_wind_type", "unknown"))
+    except Exception:
+        pass
+
     print("\n" + "#"*80)
-    print("      WWTE PIPELINE END-TO-END COORDINATOR (ZABOL & 850MB WIND)")
+    print(f"      WWTE PIPELINE END-TO-END COORDINATOR (Wind: {wind_banner})")
     print("#"*80)
     
     pipeline_start = time.time()

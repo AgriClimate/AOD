@@ -77,11 +77,12 @@ AOD/
 ├── main.py                          # Pipeline entry point (runs analysis + plotting)
 ├── README.md                        # This file
 │
-├── resources/                       # Core scripts and configuration
-│   ├── config.json                  # Central pipeline configuration
+├── config/
+│   └── config.json                  # Central pipeline configuration
+│
+├── resources/                       # Core scripts
 │   ├── wwte_aod_index_analysis.py   # WWTE scoring engine (OOP)
 │   ├── plot_climatology.py          # Advanced 3-panel visualizer (OOP)
-│   ├── plot_score_omega.py          # Standalone score/omega plotter
 │   ├── calculate_climatology.py     # Climatology calculator utility
 │   ├── download_aod_neo.py          # NASA NEO AOD downloader
 │   ├── download_era5_wind.py        # ERA5 wind downloader (general)
@@ -99,12 +100,12 @@ AOD/
 │
 ├── outputs/                         # Generated outputs
 │   ├── results/                     # NetCDF and CSV files
-│   │   ├── wwte_wind850mb_combined.nc
-│   │   ├── wwte_summary_wind850mb.csv
+│   │   ├── wwte_wind{active_wind_type}_combined.nc
+│   │   ├── wwte_summary_wind{active_wind_type}.csv
 │   │   └── climatology/
-│   │       └── wwte_climatology_wind850mb_combined.nc
+│   │       └── wwte_climatology_wind{active_wind_type}_combined.nc
 │   └── plots/                       # Monthly climatology maps (PNG)
-│       └── climatology_wwte_score_wind850mb_*.png
+│       └── climatology_wwte_score_wind{active_wind_type}_*.png
 │
 ├── licence/                         # Proprietary license
 │   └── LICENSE.txt
@@ -143,7 +144,7 @@ pip install numpy pandas xarray rioxarray rasterio geopandas geopy matplotlib sh
 
 ## Configuration
 
-All pipeline parameters are centralized in [`resources/config.json`](resources/config.json):
+All pipeline parameters are centralized in [`config/config.json`](config/config.json):
 
 ```json
 {
@@ -157,6 +158,8 @@ All pipeline parameters are centralized in [`resources/config.json`](resources/c
         "plots": "outputs/plots"
     },
     "source_country": "full_domain",
+    "aod_source_mode": "hotspot",
+    "aod_threshold": null,
     "active_wind_type": "wind850mb",
     "sink_location": {
         "name": "Zabol, Iran"
@@ -181,6 +184,8 @@ All pipeline parameters are centralized in [`resources/config.json`](resources/c
 | Parameter | Description | Default |
 |---|---|---|
 | `active_wind_type` | Wind level to use: `"wind10m"` or `"wind850mb"` | `"wind850mb"` |
+| `aod_source_mode` | Select AOD source pixels: `"hotspot"` (only hotspot mask=1) or `"all"` | `"hotspot"` |
+| `aod_threshold` | Optional AOD threshold applied on top of source mode (use `null` to disable) | `null` |
 | `sink_location.name` | Target city name (auto-geocoded via Nominatim) | `"Zabol, Iran"` |
 | `source_country` | Restrict sources to a country, or `"full_domain"` | `"full_domain"` |
 | `decay_length_km` | Distance decay e-folding length (km) | `800.0` |
@@ -251,8 +256,10 @@ The output NetCDF files (`outputs/results/`) contain the following variables on 
 | `cos_angle` | Cosine of angle between wind and sink bearing |
 | `dist_decay` | Exponential distance decay factor |
 | `toward_mask` | Binary: wind blows toward the sink (1/0) |
-| `source_mask` | Binary: cell is within the source domain (1/0) |
-| `Hotspot_Mask` | Hotspot classification mask |
+| `country_mask` | Binary: cell is inside selected source country/domain (1/0) |
+| `aod_selection_mask` | Binary: cell passed AOD source mode + threshold filter (1/0) |
+| `source_mask` | Binary: final analysis mask = country_mask AND aod_selection_mask (1/0) |
+| `Hotspot_Mask` | Binary hotspot raster mask from input TIFF (1/0) |
 | `WWTE_Score` | Transport efficiency score |
 | `WWTE_Weight` | Directional-speed weight (Omega) |
 
@@ -263,6 +270,8 @@ The CSV file (`outputs/results/wwte_summary_wind850mb.csv`) provides per-month a
 | Column | Description |
 |---|---|
 | `year_month` | YYYY-MM identifier |
+| `aod_source_mode` | AOD source filter used for that run (`hotspot` or `all`) |
+| `aod_threshold` | Applied AOD threshold (null/NaN means disabled) |
 | `zabol_aod` | Mean AOD within the sink buffer zone |
 | `wwte_index` | Weighted transport efficiency index |
 | `wwte_index_norm` | Min-max normalized WWTE index (0–1) |
@@ -275,10 +284,10 @@ The CSV file (`outputs/results/wwte_summary_wind850mb.csv`) provides per-month a
 Monthly climatology maps are saved as 300 DPI PNG files in `outputs/plots/`:
 
 ```
-climatology_wwte_score_wind850mb_01.png  (January)
-climatology_wwte_score_wind850mb_02.png  (February)
+climatology_wwte_score_wind{active_wind_type}_01.png  (January)
+climatology_wwte_score_wind{active_wind_type}_02.png  (February)
 ...
-climatology_wwte_score_wind850mb_12.png  (December)
+climatology_wwte_score_wind{active_wind_type}_12.png  (December)
 ```
 
 Each map contains three panels:
@@ -294,7 +303,7 @@ Each map contains three panels:
 main.py
   │
   ├──▶ resources/wwte_aod_index_analysis.py
-  │     ├── ConfigManager          — Loads config.json, geocodes sink location
+    │     ├── ConfigManager          — Loads config/config.json, geocodes sink location
   │     ├── WWTEGeospatialEngine   — Haversine distance, bearing vectors
   │     └── WWTEPipeline           — Orchestrates loading, scoring, and export
   │           ├── initialize()
@@ -317,6 +326,7 @@ main.py
 
 | Version | Date | Changes |
 |---|---|---|
+| **v1.4** | 2026-05-21 | Moved central config to `config/config.json`; strict wind-type resolution (`wind10m`/`wind850mb`) for input/output/plots; added `aod_source_mode` (`hotspot` or `all`) and optional `aod_threshold`; fixed monthly hotspot usage to always map AOD month MM to `binary_Avg_AOD_24yr_MonthMM_2001_2024.tif`; corrected exported masks (`Hotspot_Mask`, `country_mask`, `aod_selection_mask`, `source_mask`) |
 | **v1.3** | 2025-05-21 | Output NetCDF uses `lat`/`lon` dimensions (CF-compliant); added proprietary licence; restructured folders to `inputs/`, `outputs/`, `resources/`; added `main.py` pipeline coordinator |
 | **v1.2** | — | Advanced OOP-based plotting engine (`plot_climatology.py`); 3-panel Score/Omega/Score×Omega maps; discrete quantile colormaps |
 | **v1.1** | — | Added 850 hPa wind support; geocoding for sink location; source country masking; distance decay scoring |

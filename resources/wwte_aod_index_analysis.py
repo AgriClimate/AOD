@@ -159,6 +159,51 @@ class WWTEPipeline:
         self.config = ConfigManager.load_parameters(self.config_path)
         self.sink = ConfigManager.parse_sink_location(self.config)
 
+    def _resolve_wind_suffix(self) -> str:
+        """Maps active_wind_type from config to the canonical output/input suffix."""
+        cfg = self.config or {}
+        wind_type = str(cfg.get("active_wind_type", "wind10m")).strip().lower()
+        if wind_type in {"10m", "wind10m"}:
+            return "wind10m"
+        if wind_type in {"850", "850mb", "wind850mb"}:
+            return "wind850mb"
+        raise ValueError(
+            f"Unsupported active_wind_type: {cfg.get('active_wind_type')}. "
+            "Use 'wind10m' or 'wind850mb'."
+        )
+
+    def _resolve_aod_source_mode(self) -> str:
+        """Resolves how AOD pixels are selected before transport calculations."""
+        cfg = self.config or {}
+        mode = str(cfg.get("aod_source_mode", "hotspot")).strip().lower()
+        if mode in {"hotspot", "hotspots"}:
+            return "hotspot"
+        if mode in {"all", "all_pixels", "allpixels"}:
+            return "all"
+        raise ValueError(
+            f"Unsupported aod_source_mode: {cfg.get('aod_source_mode')}. "
+            "Use 'hotspot' or 'all'."
+        )
+
+    def _resolve_aod_threshold(self) -> Optional[float]:
+        """Returns optional AOD threshold; None means disabled."""
+        cfg = self.config or {}
+        raw = cfg.get("aod_threshold", None)
+        if raw is None:
+            return None
+        if isinstance(raw, str) and raw.strip().lower() in {"", "none", "null"}:
+            return None
+        threshold = float(raw)
+        if threshold < 0:
+            raise ValueError("aod_threshold must be >= 0 when provided.")
+        return threshold
+
+    @staticmethod
+    def _hotspot_path_for_month(dir_hotspot: str, month: str) -> str:
+        """Builds the canonical hotspot mask path for a given month (01..12)."""
+        mm = f"{int(month):02d}"
+        return os.path.join(dir_hotspot, f"binary_Avg_AOD_24yr_Month{mm}_2001_2024.tif")
+
     def _get_country_mask(self, country_name: str, lons: np.ndarray, lats: np.ndarray, ref_ds: xr.Dataset) -> np.ndarray:
         """
         Creates a boolean mask for the specified country using Natural Earth boundaries.
@@ -203,18 +248,14 @@ class WWTEPipeline:
         dir_aod = os.path.join(self.base_dir, dirs['aod_combined'])
         dir_wind = os.path.join(self.base_dir, dirs['wind'])
         
-        wind_type = self.config.get("active_wind_type", "wind10m")
-        if wind_type in ["10m", "wind10m"]:
-            wind_file_suffix = "wind10m"
-        elif "850mb" in wind_type or "850" in wind_type:
-            wind_file_suffix = "wind850mb"
-        else:
-            wind_file_suffix = "wind850hp"
+        wind_file_suffix = self._resolve_wind_suffix()
         
         bbox = params['bounding_box']
         res = params['resolution_deg']
         decay_length = params['decay_length_km']
         q_high = params['af_high_aod_quantile']
+        aod_source_mode = self._resolve_aod_source_mode()
+        aod_threshold = self._resolve_aod_threshold()
         
         # Reference grids
         lons = np.arange(bbox['min_lon'], bbox['max_lon'] + res/2, res)
@@ -251,7 +292,7 @@ class WWTEPipeline:
             if ds_wind_month is None:
                 continue
                 
-            hotspot_path = os.path.join(dir_hotspot, f"binary_Avg_AOD_24yr_Month{month}_2001_2024.tif")
+            hotspot_path = self._hotspot_path_for_month(dir_hotspot, month)
             if not os.path.exists(hotspot_path):
                 continue
                 
@@ -325,12 +366,24 @@ class WWTEPipeline:
                 sink_aod_vals = aod_arr[buf_mask & np.isfinite(aod_arr)]
                 sink_aod_val = float(np.nanmean(sink_aod_vals)) if len(sink_aod_vals) > 0 else np.nan
                 
-                # Transport analysis: apply source country mask
+                # Transport analysis: apply source country mask, then AOD selection mask from config.
                 source_country = self.config.get('source_country', 'full_domain')
                 if source_country.lower() == 'full_domain':
-                    source_mask = np.ones_like(aod_arr, dtype=bool)
+                    country_mask = np.ones_like(aod_arr, dtype=bool)
                 else:
-                    source_mask = self._get_country_mask(source_country, lons, lats, ref_ds)
+                    country_mask = self._get_country_mask(source_country, lons, lats, ref_ds)
+
+                hotspot_mask = np.isfinite(hotspot_arr) & (hotspot_arr > 0)
+                if aod_source_mode == "hotspot":
+                    aod_selection_mask = hotspot_mask.copy()
+                else:
+                    aod_selection_mask = np.isfinite(aod_arr)
+
+                if aod_threshold is not None:
+                    aod_selection_mask &= np.isfinite(aod_arr) & (aod_arr > aod_threshold)
+
+                source_mask = country_mask & aod_selection_mask
+
                 dx_hat, dy_hat = WWTEGeospatialEngine.bearing_unit_vectors(lon2d, lat2d, self.sink.lon, self.sink.lat)
                 wind_mag = np.sqrt(u_arr**2 + v_arr**2)
                 
@@ -375,6 +428,8 @@ class WWTEPipeline:
                     "year_month": year_month,
                     "year": year,
                     "month": month,
+                    "aod_source_mode": aod_source_mode,
+                    "aod_threshold": aod_threshold,
                     f"{self.sink.name.lower()}_aod": sink_aod_val,
                     "wwte_index": wwte_index,
                     "toward_pixel_count": int(np.sum(toward)),
@@ -398,7 +453,9 @@ class WWTEPipeline:
                         "dist_decay": (("lat", "lon"), dist_decay.astype("float32")),
                         "toward_mask": (("lat", "lon"), toward.astype(np.int8)),
                         "source_mask": (("lat", "lon"), source_mask.astype(np.int8)),
-                        "Hotspot_Mask": (("lat", "lon"), source_mask.astype(np.int32)),
+                        "country_mask": (("lat", "lon"), country_mask.astype(np.int8)),
+                        "aod_selection_mask": (("lat", "lon"), aod_selection_mask.astype(np.int8)),
+                        "Hotspot_Mask": (("lat", "lon"), hotspot_mask.astype(np.int32)),
                         "WWTE_Score": (("lat", "lon"), score),
                         "WWTE_Weight": (("lat", "lon"), weight),
                     },
@@ -429,13 +486,7 @@ class WWTEPipeline:
         dir_out = os.path.join(self.base_dir, dirs['output'])
         os.makedirs(dir_out, exist_ok=True)
         
-        wind_type = self.config.get("active_wind_type", "wind10m")
-        if wind_type in ["10m", "wind10m"]:
-            wind_file_suffix = "wind10m"
-        elif "850mb" in wind_type or "850" in wind_type:
-            wind_file_suffix = "wind850mb"
-        else:
-            wind_file_suffix = "wind850hp"
+        wind_file_suffix = self._resolve_wind_suffix()
         
         # Write unified multi-year NetCDF (monthly climatology: average Jan, Feb, ... Dec across all years)
         if self.monthly_datasets:
@@ -504,7 +555,7 @@ def main() -> None:
     
     try:
         # Initialize pipeline using central config
-        pipeline = WWTEPipeline("resources/config.json")
+        pipeline = WWTEPipeline("config/config.json")
         pipeline.initialize()
         pipeline.run_spatial_analysis()
         pipeline.export_results()

@@ -298,6 +298,19 @@ class WWTEVisualizerPipeline:
         self.boundaries: Optional[GeospatialBoundaryManager] = None
         self.plotter: Optional[PremiumPlotter] = None
 
+    def _resolve_wind_config(self) -> Tuple[str, str, str]:
+        """Resolves active_wind_type to canonical suffix and display label."""
+        wind_type_raw = str(self.config_data.get("active_wind_type", "wind10m")).strip()
+        wind_type = wind_type_raw.lower()
+        if wind_type in {"10m", "wind10m"}:
+            return wind_type_raw, "wind10m", "10m"
+        if wind_type in {"850", "850mb", "wind850mb"}:
+            return wind_type_raw, "wind850mb", "850mb"
+        raise ValueError(
+            f"Unsupported active_wind_type: {wind_type_raw}. "
+            "Use 'wind10m' or 'wind850mb'."
+        )
+
     def initialize(self) -> None:
         """
         Parses configuration and coordinates geocoding if necessary.
@@ -329,16 +342,7 @@ class WWTEVisualizerPipeline:
             print(f"[GEOCODE] Resolved '{sink_name}' -> lon={lon:.4f}, lat={lat:.4f}")
 
         # Active wind selection
-        wind_type = self.config_data.get("active_wind_type", "wind850mb")
-        if wind_type in ["10m", "wind10m"]:
-            wind_file_suffix = "wind10m"
-            wind_label = "10m"
-        elif "850mb" in wind_type or "850" in wind_type:
-            wind_file_suffix = "wind850mb"
-            wind_label = "850mb"
-        else:
-            wind_file_suffix = "wind850hp"
-            wind_label = "850hp"
+        wind_type, wind_file_suffix, wind_label = self._resolve_wind_config()
 
         bbox = params['bounding_box']
         extent = [bbox['min_lon'], bbox['max_lon'], bbox['min_lat'], bbox['max_lat']]
@@ -424,7 +428,7 @@ def main() -> None:
     Main visualizer script entry point.
     """
     try:
-        pipeline = WWTEVisualizerPipeline("resources/config.json")
+        pipeline = WWTEVisualizerPipeline("config/config.json")
         pipeline.initialize()
         pipeline.run()
     except Exception as e:

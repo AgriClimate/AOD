@@ -9,6 +9,8 @@
         "plots": "outputs/plots"
     },
     "source_country": "full_domain",
+    "aod_source_mode": "hotspot",
+    "aod_threshold": null,
     "active_wind_type": "wind850mb",
     "sink_location": {
         "name": "Zabol, Iran"
