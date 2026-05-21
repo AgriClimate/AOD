@@ -87,11 +87,29 @@ AOD/
 │   ├── download_aod_neo.py          # NASA NEO AOD downloader
 │   ├── download_all_wind.py         # ERA5 wind batch downloader (--level 10m|850mb)
 │   ├── download_ndvi_neo.py         # NDVI data downloader
+│   ├── aod_hotspot_binary.py         # Converts AOD TIFFs to binary hotspot TIFFs
 │   └── analyze_ndvi.py              # NDVI analysis utility
 │
 ├── inputs/                          # Input datasets (not tracked in git)
 │   ├── ERA5_Wind/                   # ERA5 monthly wind NetCDF files
 │   ├── Hotspot_binary/              # Binary hotspot classification TIFFs
+│   │   ├── results_24year_averages/ # Monthly AOD TIFFs and binary_maps/
+│   │   │   ├── Avg_AOD_24yr_Month*.tif
+│   │   │   └── binary_maps/
+│   │   │       └── binary_Avg_AOD_24yr_Month*.tif
+## Hotspot Binary Map Generation
+
+To convert monthly AOD TIFFs to binary hotspot maps (1 = hotspot, 0 = non-hotspot):
+
+```bash
+python resources/aod_hotspot_binary.py
+```
+
+This script scans all `.tif` files in `inputs/Hotspot_binary/results_24year_averages/`,
+converts NaN to 0, and outputs binary TIFFs to `inputs/Hotspot_binary/results_24year_averages/binary_maps/`.
+
+Output files are named `binary_<original_filename>.tif`.
+
 │   ├── NEO_MCDAL2_M/               # MODIS AOD GeoTIFF monthly composites
 │   ├── NEO_MOD_NDVI_M/             # NDVI rasters (optional)
 │   └── Shpefile/                    # Auxiliary shapefiles
