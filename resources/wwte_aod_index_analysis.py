@@ -12,15 +12,12 @@
 # - config.json
 # - Satellite AOD combined grids, hotspot masks, and wind datasets.
 
-from __future__ import annotations
-
 import glob
 import json
 import math
 import os
 import sys
 import traceback
-from dataclasses import dataclass
 from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
@@ -54,12 +51,12 @@ def profile_stage(func):
     return wrapper
 
 
-@dataclass
 class SinkLocation:
-    name: str
-    lon: float
-    lat: float
-    buffer_deg: float
+    def __init__(self, name: str, lon: float, lat: float, buffer_deg: float) -> None:
+        self.name = name
+        self.lon = lon
+        self.lat = lat
+        self.buffer_deg = buffer_deg
 
 
 class WWTEGeospatialEngine:

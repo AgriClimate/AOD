@@ -1,0 +1,12 @@
+cdsapi
+geodatasets
+geopandas
+geopy
+matplotlib
+numpy
+pandas
+rasterio
+requests
+rioxarray
+shapely
+xarray
