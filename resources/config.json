@@ -1,0 +1,28 @@
+{
+    "directories": {
+        "hotspot_binary": "inputs/Hotspot_binary",
+        "aod_combined": "inputs/NEO_MCDAL2_M",
+        "wind": "inputs/ERA5_Wind",
+        "ndvi": "inputs/NEO_MOD_NDVI_M",
+        "shapefiles": "inputs/Shpefile",
+        "output": "outputs/results",
+        "plots": "outputs/plots"
+    },
+    "source_country": "full_domain",
+    "active_wind_type": "wind850mb",
+    "sink_location": {
+        "name": "Zabol, Iran"
+    },
+    "parameters": {
+        "zabol_buffer_deg": 0.3,
+        "decay_length_km": 800.0,
+        "af_high_aod_quantile": 0.75,
+        "resolution_deg": 0.1,
+        "bounding_box": {
+            "min_lon": 30.0,
+            "max_lon": 75.0,
+            "min_lat": 11.0,
+            "max_lat": 53.0
+        }
+    }
+}

@@ -1,0 +1,13 @@
+Proprietary License – No Publication or Research Use
+
+This software and its associated source code are the exclusive property of the development team. Use of this code is strictly limited to the developers and authorized personnel.
+
+**Restrictions:**
+- You may NOT use, copy, modify, or distribute this code for the purpose of publishing academic papers, articles, or any form of scholarly work.
+- You may NOT employ this code for any research activities, including but not limited to data analysis, model training, or experimentation.
+- Unauthorized distribution, sublicensing, or public sharing of any part of this repository is prohibited.
+
+**Permission:**
+Only the named developers have explicit permission to use, modify, and distribute this code within the scope of the project. All other parties must obtain written consent from the developers before any use.
+
+Violation of these terms may result in legal action.
