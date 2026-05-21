@@ -15,7 +15,7 @@ import subprocess
 import time
 import json
 
-def run_script(script_path: str) -> bool:
+def run_script(script_path):
     """
     Executes a python script inside the 'resources' directory and prints output in real-time.
     """
@@ -31,13 +31,14 @@ def run_script(script_path: str) -> bool:
             [sys.executable, script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            universal_newlines=True,
             bufsize=1
         )
         
         # Real-time stdout streaming
-        for line in process.stdout:
-            print(line, end="")
+        if process.stdout is not None:
+            for line in process.stdout:
+                print(line, end="")
             
         process.wait()
         elapsed = time.time() - start_time
@@ -53,7 +54,7 @@ def run_script(script_path: str) -> bool:
         print(f"\n❌ Failed to run {script_name}: {e}")
         return False
 
-def main() -> None:
+def main():
     """
     Main entry point coordinates both analysis and plotting components end-to-end.
     """
