@@ -85,7 +85,6 @@ AOD/
 │   ├── plot_climatology.py          # Advanced 3-panel visualizer (OOP)
 │   ├── calculate_climatology.py     # Climatology calculator utility
 │   ├── download_aod_neo.py          # NASA NEO AOD downloader
-│   ├── download_era5_wind.py        # ERA5 wind downloader (general)
 │   ├── download_all_wind_10m.py     # ERA5 10m wind batch downloader
 │   ├── download_all_wind_850.py     # ERA5 850 hPa wind batch downloader
 │   ├── download_ndvi_neo.py         # NDVI data downloader
