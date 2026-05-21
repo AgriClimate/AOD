@@ -85,8 +85,7 @@ AOD/
 │   ├── plot_climatology.py          # Advanced 3-panel visualizer (OOP)
 │   ├── calculate_climatology.py     # Climatology calculator utility
 │   ├── download_aod_neo.py          # NASA NEO AOD downloader
-│   ├── download_all_wind_10m.py     # ERA5 10m wind batch downloader
-│   ├── download_all_wind_850.py     # ERA5 850 hPa wind batch downloader
+│   ├── download_all_wind.py         # ERA5 wind batch downloader (--level 10m|850mb)
 │   ├── download_ndvi_neo.py         # NDVI data downloader
 │   └── analyze_ndvi.py              # NDVI analysis utility
 │
@@ -230,11 +229,9 @@ python resources/plot_climatology.py
 # Download MODIS AOD from NASA NEO
 python resources/download_aod_neo.py
 
-# Download ERA5 850 hPa winds (requires CDS API key)
-python resources/download_all_wind_850.py
-
-# Download ERA5 10m winds
-python resources/download_all_wind_10m.py
+# Download ERA5 winds (requires CDS API key)
+python resources/download_all_wind.py --level 850mb
+python resources/download_all_wind.py --level 10m
 ```
 
 ---
