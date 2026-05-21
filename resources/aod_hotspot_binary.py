@@ -22,14 +22,14 @@ import rasterio
 def main() -> None:
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Updated folder: inputs/Hotspots/
+    # Read from inputs/Hotspots, write to inputs/Hotspot_binary
     input_dir = os.path.join(
         base_dir,
         "inputs",
         "Hotspots",
     )
 
-    output_dir = os.path.join(input_dir, "binary_maps")
+    output_dir = os.path.join(base_dir, "inputs", "Hotspot_binary")
     os.makedirs(output_dir, exist_ok=True)
 
     tiff_files = sorted(glob.glob(os.path.join(input_dir, "*.tif")))
