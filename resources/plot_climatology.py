@@ -288,7 +288,7 @@ class PremiumPlotter:
                 self.config.target_lat, 
                 marker='*', 
                 color='#1e90ff', 
-                markersize=18, 
+                markersize=12, 
                 markeredgecolor='black', 
                 markeredgewidth=1.5,
                 zorder=5,
