@@ -18,14 +18,15 @@ import numpy as np
 import rasterio
 
 
+
 def main() -> None:
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+    # Updated folder: inputs/Hotspots/
     input_dir = os.path.join(
         base_dir,
         "inputs",
-        "Hotspot_binary",
-        "results_24year_averages",
+        "Hotspots",
     )
 
     output_dir = os.path.join(input_dir, "binary_maps")
