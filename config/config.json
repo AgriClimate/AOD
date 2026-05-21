@@ -11,9 +11,11 @@
     "source_country": "full_domain",
     "aod_source_mode": "hotspot",
     "aod_threshold": null,
-    "active_wind_type": "wind10m",
+    "active_wind_type": "wind850mb",
     "sink_location": {
-        "name": "Zabol, Iran"
+        "name": "Zabol",
+        "lon": 61.49,
+        "lat": 31.03
     },
     "parameters": {
         "zabol_buffer_deg": 0.3,

@@ -108,30 +108,18 @@ class ConfigManager:
     def parse_sink_location(cls, config: Dict[str, Any]) -> SinkLocation:
         """
         Parses and validates sink coordinates.
-        Supports two modes:
-          1. Explicit: {"name": "Zabol", "lon": 61.49, "lat": 31.03}
-          2. Geocode: {"name": "Zabol, Iran"} — lat/lon looked up automatically
+        Only uses explicit coordinates from config (offline safe).
         """
         sink_cfg = config['sink_location']
         params = config['parameters']
         name = sink_cfg['name']
 
-        if 'lon' in sink_cfg and 'lat' in sink_cfg:
-            lon = float(sink_cfg['lon'])
-            lat = float(sink_cfg['lat'])
-        else:
-            # Geocode the city name using Nominatim (OpenStreetMap)
-            print(f"[GEOCODE] Looking up coordinates for '{name}'...")
-            geolocator = Nominatim(user_agent="wwte_pipeline")
-            location = geolocator.geocode(name)
-            if location is None:
-                raise ValueError(
-                    f"Could not geocode '{name}'. Provide explicit lon/lat in config "
-                    f"or use a more specific name (e.g., 'Zabol, Iran')."
-                )
-            lon = location.longitude
-            lat = location.latitude
-            print(f"[GEOCODE] Resolved '{name}' → lon={lon:.4f}, lat={lat:.4f}")
+        if 'lon' not in sink_cfg or 'lat' not in sink_cfg:
+            raise ValueError(
+                f"sink_location must include explicit 'lon' and 'lat' fields in config.json for offline use."
+            )
+        lon = float(sink_cfg['lon'])
+        lat = float(sink_cfg['lat'])
 
         buffer_val = params.get(f"{name.split(',')[0].strip().lower()}_buffer_deg", 0.3)
         return SinkLocation(name=name.split(',')[0].strip(), lon=lon, lat=lat, buffer_deg=buffer_val)
