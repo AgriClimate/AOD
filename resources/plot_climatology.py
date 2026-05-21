@@ -59,29 +59,64 @@ class GeospatialBoundaryManager:
     def __init__(self, base_dir: str):
         self.base_dir = base_dir
 
+    def _load_boundaries(
+        self,
+        dataset_name: str,
+        local_candidates: List[str],
+        remote_candidates: List[str]
+    ) -> Optional[gpd.GeoDataFrame]:
+        """
+        Loads boundaries using a local-first strategy, with remote fallback.
+        """
+        for rel_path in local_candidates:
+            local_path = os.path.join(self.base_dir, rel_path)
+            if os.path.exists(local_path):
+                try:
+                    print(f"[BOUNDARIES] Loading {dataset_name} from local file: {local_path}")
+                    return gpd.read_file(local_path)
+                except Exception as e:
+                    print(f"[BOUNDARIES WARNING] Failed reading local {dataset_name} ({local_path}): {e}")
+
+        for url in remote_candidates:
+            try:
+                print(f"[BOUNDARIES] Fetching {dataset_name} from remote source: {url}")
+                return gpd.read_file(url)
+            except Exception as e:
+                print(f"[BOUNDARIES WARNING] Failed downloading {dataset_name} from {url}: {e}")
+
+        print(f"[BOUNDARIES WARNING] No usable {dataset_name} boundaries found.")
+        return None
+
     def load_world_boundaries(self) -> Optional[gpd.GeoDataFrame]:
         """
-        Attempts to load international country boundaries from public web repositories.
+        Loads world country boundaries from local files, with online fallback.
         """
-        url = "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_0_countries.zip"
-        print(f"[BOUNDARIES] Fetching world boundaries from Natural Earth...")
-        try:
-            return gpd.read_file(url)
-        except Exception as e:
-            print(f"[BOUNDARIES WARNING] Failed to download online world boundaries: {e}")
-            return None
+        return self._load_boundaries(
+            dataset_name="world countries",
+            local_candidates=[
+                "inputs/Shpefile/world_countries.geojson",
+                "inputs/Shpefile/countries.geojson"
+            ],
+            remote_candidates=[
+                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson",
+                "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_0_countries.zip"
+            ]
+        )
 
     def load_iran_provinces(self) -> Optional[gpd.GeoDataFrame]:
         """
-        Loads administrative province boundaries of Iran from online GeoJSON.
+        Loads Iran provinces boundaries from local files, with online fallback.
         """
-        url = "https://raw.githubusercontent.com/mrunderline/iran-geojson/master/ir_states_boundaries_coordinates.geojson"
-        try:
-            print(f"[BOUNDARIES] Fetching Iran provinces from online GeoJSON...")
-            return gpd.read_file(url)
-        except Exception as e:
-            print(f"[BOUNDARIES WARNING] Failed to fetch Iran provinces boundaries: {e}")
-            return None
+        return self._load_boundaries(
+            dataset_name="Iran provinces",
+            local_candidates=[
+                "inputs/Shpefile/iran_provinces.geojson",
+                "inputs/Shpefile/provinces.geojson"
+            ],
+            remote_candidates=[
+                "https://raw.githubusercontent.com/mrunderline/iran-geojson/master/ir_states_boundaries_coordinates.geojson"
+            ]
+        )
 
 
 class WWTEGeospatialEngine:
