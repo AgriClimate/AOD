@@ -27,6 +27,16 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from geopy.geocoders import Nominatim
+import logging
+
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    filename="pipeline.log",
+    filemode="a",  # Append to log file
+    format="%(asctime)s %(levelname)s: %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger("wwte.plot_climatology")
 
 # --- CONSTANTS ---
 EARTH_RADIUS_KM: float = 6371.0
@@ -72,19 +82,24 @@ class GeospatialBoundaryManager:
             local_path = os.path.join(self.base_dir, rel_path)
             if os.path.exists(local_path):
                 try:
-                    print(f"[BOUNDARIES] Loading {dataset_name} from local file: {local_path}")
+                    print(f"[BOUNDARIES] Loading {dataset_name} from local file: {os.path.relpath(local_path, self.base_dir)}")
+                    logger.info(f"[BOUNDARIES] Loading {dataset_name} from local file: {os.path.relpath(local_path, self.base_dir)}")
                     return gpd.read_file(local_path)
                 except Exception as e:
                     print(f"[BOUNDARIES WARNING] Failed reading local {dataset_name} ({local_path}): {e}")
+                    logger.warning(f"[BOUNDARIES WARNING] Failed reading local {dataset_name} ({os.path.relpath(local_path, self.base_dir)}): {e}")
 
         for url in remote_candidates:
             try:
                 print(f"[BOUNDARIES] Fetching {dataset_name} from remote source: {url}")
+                logger.info(f"[BOUNDARIES] Fetching {dataset_name} from remote source: {url}")
                 return gpd.read_file(url)
             except Exception as e:
                 print(f"[BOUNDARIES WARNING] Failed downloading {dataset_name} from {url}: {e}")
+                logger.warning(f"[BOUNDARIES WARNING] Failed downloading {dataset_name} from {url}: {e}")
 
         print(f"[BOUNDARIES WARNING] No usable {dataset_name} boundaries found.")
+        logger.warning(f"[BOUNDARIES WARNING] No usable {dataset_name} boundaries found.")
         return None
 
     def load_world_boundaries(self) -> Optional[gpd.GeoDataFrame]:
@@ -312,12 +327,10 @@ class PremiumPlotter:
         )
         
         plt.tight_layout()
-        out_filename = f"climatology_wwte_score_{self.config.wind_file_suffix}_{mm}.png"
-        out_path = os.path.join(self.config.plots_dir, out_filename)
-        plt.savefig(out_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-        
-        print(f"[PLOT SUCCESS] Saved advanced plot: {out_path}")
+        out_path = os.path.join(self.config.plots_dir, f"climatology_wwte_score_{self.config.wind_file_suffix}_{mm}.png")
+        rel_out_path = os.path.relpath(out_path, self.config.plots_dir)
+        print(f"[PLOT SUCCESS] Saved advanced plot: {os.path.join('outputs/plots', rel_out_path)}")
+        logger.info(f"[PLOT SUCCESS] Saved advanced plot: {os.path.join('outputs/plots', rel_out_path)}")
         return out_path
 
 
@@ -350,9 +363,9 @@ class WWTEVisualizerPipeline:
         """
         Parses configuration and coordinates geocoding if necessary.
         """
-        print("="*60)
-        print(" INITIALIZING ADVANCED WWTE GEOSPATIAL VISUALIZATION PIPELINE")
-        print("="*60)
+        banner = "\n" + "="*60 + "\n INITIALIZING ADVANCED WWTE GEOSPATIAL VISUALIZATION PIPELINE\n" + "="*60
+        print(banner)
+        logger.info(banner)
         
         with open(self.config_path, 'r') as f:
             self.config_data = json.load(f)
@@ -405,6 +418,7 @@ class WWTEVisualizerPipeline:
         self.boundaries = GeospatialBoundaryManager(self.base_dir)
         self.plotter = PremiumPlotter(self.visualizer_config, self.boundaries)
         print("[INITIALIZATION COMPLETE] Visualization framework prepared successfully.\n")
+        logger.info("[INITIALIZATION COMPLETE] Visualization framework prepared successfully.")
 
     def run(self) -> None:
         """
@@ -425,7 +439,10 @@ class WWTEVisualizerPipeline:
             else:
                 raise FileNotFoundError(f"Climatology NetCDF file not found at: {nc_path} or {fallback_nc_path}")
 
-        print(f"[NETCDF LOAD] Reading combined monthly averages from: {nc_path}")
+        rel_nc_path = os.path.relpath(nc_path, self.base_dir)
+        print(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
+        logger.info(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
+
         ds = xr.open_dataset(nc_path)
         
         # Grid parameters (support both lat/lon and legacy y/x naming)
@@ -455,6 +472,7 @@ class WWTEVisualizerPipeline:
 
         ds.close()
         print(f"\n[PIPELINE SUCCESS] Visualizer pipeline completed. Plotted {len(plotted_files)} month(s).")
+        logger.info(f"[PIPELINE SUCCESS] Visualizer pipeline completed. Plotted {len(plotted_files)} month(s).")
         print("="*60)
 
 

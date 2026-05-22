@@ -12,12 +12,14 @@
 # - config.json
 # - Satellite AOD combined grids, hotspot masks, and wind datasets.
 
+
 import glob
 import json
 import math
 import os
 import sys
 import traceback
+import logging
 from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
@@ -26,8 +28,15 @@ import geopandas as gpd
 import rasterio
 import rioxarray
 import xarray as xr
-from geopy.geocoders import Nominatim
 from shapely.geometry import mapping
+
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    filename="pipeline.log",
+    filemode="w",  # Overwrite log file on each run
+    format="%(asctime)s %(levelname)s: %(message)s",
+    level=logging.INFO
+)
 
 
 # --- CONSTANTS ---
@@ -41,12 +50,20 @@ def profile_stage(func):
     """
     def wrapper(*args, **kwargs):
         print(f"\n[PIPELINE STAGE] Running: {func.__name__}...")
+        logging.info(f"[PIPELINE STAGE] Running: {func.__name__}...")
         try:
             result = func(*args, **kwargs)
             print(f"[PIPELINE STAGE] Finished: {func.__name__} successfully.")
+            logging.info(f"[PIPELINE STAGE] Finished: {func.__name__} successfully.")
             return result
         except Exception as e:
             print(f"[PIPELINE ERROR] Failed in stage {func.__name__}: {e}")
+            logging.error(f"[PIPELINE ERROR] Failed in stage {func.__name__}: {e}")
+            # Redact absolute paths from traceback
+            tb = traceback.format_exc()
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            tb_redacted = tb.replace(base_dir + os.sep, "")
+            logging.error(tb_redacted)
             raise e
     return wrapper
 
@@ -225,69 +242,94 @@ class WWTEPipeline:
 
     @profile_stage
     def run_spatial_analysis(self) -> None:
-        """Executes the core calculations on all monthly inputs."""
+        """Executes the core calculations on all monthly inputs. Detailed logging added."""
+        import traceback
         dirs = self.config['directories']
         params = self.config['parameters']
-        
+        logger = logging.getLogger("wwte.run_spatial_analysis")
+
         dir_hotspot = os.path.join(self.base_dir, dirs['hotspot_binary'])
         dir_aod = os.path.join(self.base_dir, dirs['aod_combined'])
         dir_wind = os.path.join(self.base_dir, dirs['wind'])
-        
+        # Log only local (relative) paths for input directories
+        rel_hotspot = os.path.relpath(dir_hotspot, self.base_dir)
+        rel_aod = os.path.relpath(dir_aod, self.base_dir)
+        rel_wind = os.path.relpath(dir_wind, self.base_dir)
+        logger.info(f"Input directories: hotspot={rel_hotspot}, aod={rel_aod}, wind={rel_wind}")
+
         wind_file_suffix = self._resolve_wind_suffix()
-        
+        logger.info(f"Wind file suffix: {wind_file_suffix}")
+
         bbox = params['bounding_box']
         res = params['resolution_deg']
         decay_length = params['decay_length_km']
         q_high = params['af_high_aod_quantile']
         aod_source_mode = self._resolve_aod_source_mode()
         aod_threshold = self._resolve_aod_threshold()
-        
+        logger.info(f"Params: bbox={bbox}, res={res}, decay_length={decay_length}, q_high={q_high}, aod_source_mode={aod_source_mode}, aod_threshold={aod_threshold}")
+
         # Reference grids
         lons = np.arange(bbox['min_lon'], bbox['max_lon'] + res/2, res)
         lats = np.arange(bbox['max_lat'], bbox['min_lat'] - res/2, -res)
         lon2d, lat2d = np.meshgrid(lons, lats)
         ref_ds = xr.Dataset(coords={'y': lats, 'x': lons})
         ref_ds.rio.write_crs("EPSG:4326", inplace=True)
-        
+        logger.info(f"Reference grid shapes: lons={lons.shape}, lats={lats.shape}")
+
         # Load wind global database
         wind_path = os.path.join(
             dir_wind, 
             "era5_monthly_wind10m_combined.nc" if wind_file_suffix == "wind10m" else "era5_monthly_wind850mb_combined.nc"
         )
-        combined_wind = xr.open_dataset(wind_path)
-        
+        rel_wind_path = os.path.relpath(wind_path, self.base_dir)
+        logger.info(f"Loading wind dataset: {rel_wind_path}")
+        try:
+            combined_wind = xr.open_dataset(wind_path)
+        except Exception as e:
+            logger.error(f"Failed to load wind dataset: {wind_path}: {e}")
+            logger.error(traceback.format_exc())
+            raise
 
         aod_files = sorted(glob.glob(os.path.join(dir_aod, 'MCDAL2_M_AER_OD_*-*.FLOAT.TIFF')))
-        
+        logger.info(f"Found {len(aod_files)} AOD files.")
+
         for aod_path in aod_files:
             filename = os.path.basename(aod_path)
             year_month = filename.split('_')[4].split('.')[0]
             year, month = year_month.split('-')
-            
+            rel_aod_path = os.path.relpath(aod_path, self.base_dir)
+            logger.info(f"Processing {year_month}: {rel_aod_path}")
+
             time_str = f"{year}-{month}-01"
             ds_wind_month = None
             for coord in ["valid_time", "time"]:
                 if coord in combined_wind.coords:
                     try:
                         ds_wind_month = combined_wind.sel({coord: time_str}, method='nearest')
+                        logger.info(f"Selected wind month for {coord}={time_str}")
                         break
-                    except Exception:
-                        pass
-                        
+                    except Exception as e:
+                        logger.warning(f"Failed to select wind month for {coord}={time_str}: {e}")
             if ds_wind_month is None:
+                logger.warning(f"No wind data for {year_month}, skipping.")
                 continue
-                
+
+
             hotspot_path = self._hotspot_path_for_month(dir_hotspot, month)
+            rel_hotspot_path = os.path.relpath(hotspot_path, self.base_dir)
             if not os.path.exists(hotspot_path):
+                logger.warning(f"Missing hotspot mask for {year_month}: {rel_hotspot_path}, skipping.")
                 continue
-                
-            # Process single slice
+
             try:
+                logger.info("--- Start: Load and crop datasets ---")
+                logger.info(f"Loading AOD: {rel_aod_path}")
                 da_aod_raw = rioxarray.open_rasterio(aod_path).isel(band=0)
+                logger.info(f"Loading Hotspot: {rel_hotspot_path}")
                 da_hotspot_raw = rioxarray.open_rasterio(hotspot_path).isel(band=0)
-                
-                # Crop to box with 1deg safety padding
+
                 pad = 1.0
+                logger.info(f"Cropping AOD and Hotspot to bounding box with pad={pad}")
                 da_aod_crop = da_aod_raw.rio.clip_box(
                     minx=max(float(da_aod_raw.x.min()), bbox['min_lon'] - pad),
                     miny=max(float(da_aod_raw.y.min()), bbox['min_lat'] - pad),
@@ -300,13 +342,14 @@ class WWTEPipeline:
                     maxx=min(float(da_hotspot_raw.x.max()), bbox['max_lon'] + pad),
                     maxy=min(float(da_hotspot_raw.y.max()), bbox['max_lat'] + pad)
                 )
-                
+
                 u_var = 'u10' if 'u10' in ds_wind_month else 'u'
                 v_var = 'v10' if 'v10' in ds_wind_month else 'v'
-                
+                logger.info(f"Wind variable names: u={u_var}, v={v_var}")
+
                 da_u_raw = ds_wind_month[u_var].squeeze(drop=True)
                 da_v_raw = ds_wind_month[v_var].squeeze(drop=True)
-                
+
                 rename_dict = {}
                 for dim_name, std_name in [('latitude', 'y'), ('lat', 'y'), ('longitude', 'x'), ('lon', 'x')]:
                     if dim_name in da_u_raw.dims:
@@ -314,10 +357,11 @@ class WWTEPipeline:
                 if rename_dict:
                     da_u_raw = da_u_raw.rename(rename_dict)
                     da_v_raw = da_v_raw.rename(rename_dict)
-                    
+                    logger.info(f"Renamed wind dimensions: {rename_dict}")
+
                 da_u_raw.rio.write_crs("EPSG:4326", inplace=True)
                 da_v_raw.rio.write_crs("EPSG:4326", inplace=True)
-                
+
                 da_u_crop = da_u_raw.rio.clip_box(
                     minx=max(float(da_u_raw.x.min()), bbox['min_lon'] - pad),
                     miny=max(float(da_u_raw.y.min()), bbox['min_lat'] - pad),
@@ -330,28 +374,31 @@ class WWTEPipeline:
                     maxx=min(float(da_v_raw.x.max()), bbox['max_lon'] + pad),
                     maxy=min(float(da_v_raw.y.max()), bbox['max_lat'] + pad)
                 )
-                
-                # Match grids
+
+                logger.info(f"Reprojecting/cropping all arrays to reference grid")
                 da_aod_ref = da_aod_crop.rio.reproject_match(ref_ds, resampling=rasterio.enums.Resampling.bilinear)
                 da_hotspot_ref = da_hotspot_crop.rio.reproject_match(ref_ds, resampling=rasterio.enums.Resampling.nearest)
                 da_u_ref = da_u_crop.rio.reproject_match(ref_ds, resampling=rasterio.enums.Resampling.bilinear)
                 da_v_ref = da_v_crop.rio.reproject_match(ref_ds, resampling=rasterio.enums.Resampling.bilinear)
-                
+
                 aod_arr = da_aod_ref.values.astype("float32")
                 aod_arr[aod_arr > 10.0] = np.nan
                 aod_arr[aod_arr < 0.0] = np.nan
-                
+
                 hotspot_arr = da_hotspot_ref.values
                 u_arr = da_u_ref.values.astype("float32")
                 v_arr = da_v_ref.values.astype("float32")
-                
-                # Proximity analysis
+
+                logger.info(f"Shapes: aod={aod_arr.shape}, hotspot={hotspot_arr.shape}, u={u_arr.shape}, v={v_arr.shape}")
+
+                logger.info("--- Start: Proximity analysis ---")
                 dist_deg = np.sqrt((lon2d - self.sink.lon) ** 2 + (lat2d - self.sink.lat) ** 2)
                 buf_mask = dist_deg <= self.sink.buffer_deg
                 sink_aod_vals = aod_arr[buf_mask & np.isfinite(aod_arr)]
                 sink_aod_val = float(np.nanmean(sink_aod_vals)) if len(sink_aod_vals) > 0 else np.nan
+
                 
-                # Transport analysis: apply source country mask, then AOD selection mask from config.
+                logger.info("--- Start: Transport analysis ---")
                 source_country = self.config.get('source_country', 'full_domain')
                 if source_country.lower() == 'full_domain':
                     country_mask = np.ones_like(aod_arr, dtype=bool)
@@ -371,20 +418,20 @@ class WWTEPipeline:
 
                 dx_hat, dy_hat = WWTEGeospatialEngine.bearing_unit_vectors(lon2d, lat2d, self.sink.lon, self.sink.lat)
                 wind_mag = np.sqrt(u_arr**2 + v_arr**2)
-                
+
                 valid = source_mask & np.isfinite(aod_arr) & np.isfinite(u_arr) & np.isfinite(v_arr) & (wind_mag > 0)
                 u_hat = np.where(wind_mag > 0, u_arr / wind_mag, np.nan)
                 v_hat = np.where(wind_mag > 0, v_arr / wind_mag, np.nan)
-                
+
                 cosang = u_hat * dx_hat + v_hat * dy_hat
                 toward = valid & (cosang > 0)
-                
+
                 speed_max = float(np.nanmax(wind_mag[toward])) if np.any(toward) else 1.0
                 speed_norm = wind_mag / max(speed_max, 1e-6)
-                
+
                 dist_km = WWTEGeospatialEngine.haversine_distance_km(lon2d, lat2d, self.sink.lon, self.sink.lat)
                 dist_decay = np.exp(-dist_km / decay_length)
-                
+
                 score = np.full(aod_arr.shape, np.nan, dtype="float32")
                 score[toward] = (
                     aod_arr[toward]
@@ -392,14 +439,15 @@ class WWTEPipeline:
                     * speed_norm[toward]
                     * dist_decay[toward]
                 )
-                
+
                 weight = np.zeros_like(aod_arr, dtype="float32")
                 weight[toward] = np.maximum(cosang[toward], 0.0) * speed_norm[toward]
-                
+
                 w_sum = float(np.nansum(weight[toward]))
                 wwte_index = float(np.nansum(score[toward] * weight[toward]) / w_sum) if w_sum > 0 else np.nan
+
                 
-                # Diagnostics
+                logger.info("--- Start: Diagnostics ---")
                 if np.any(toward):
                     q = np.nanquantile(aod_arr[toward], q_high)
                     high_toward = toward & (aod_arr >= q)
@@ -408,7 +456,9 @@ class WWTEPipeline:
                 else:
                     high_toward_aod = np.nan
                     high_toward_frac = np.nan
-                    
+
+                
+                logger.info("--- Start: Output and cleanup ---")
                 self.records.append({
                     "year_month": year_month,
                     "year": year,
@@ -426,7 +476,7 @@ class WWTEPipeline:
                     "high_toward_aod_mean": high_toward_aod,
                     "high_toward_fraction": high_toward_frac,
                 })
-                
+
                 ds_out = xr.Dataset(
                     {
                         "AOD": (("lat", "lon"), aod_arr),
@@ -452,17 +502,21 @@ class WWTEPipeline:
                 )
                 ds_out.rio.write_crs("EPSG:4326", inplace=True)
                 self.monthly_datasets.append(ds_out)
-                
+
                 # Cleanup
                 da_aod_raw.close()
                 da_hotspot_raw.close()
                 da_aod_crop.close()
                 da_hotspot_crop.close()
-                
+                logger.info(f"Finished processing {year_month} successfully.")
+
             except Exception as e:
+                logger.error(f"Error executing year-month {year_month}: {e}")
+                logger.error(traceback.format_exc())
                 print(f"Error executing year-month {year_month}: {e}")
-                
+
         combined_wind.close()
+        logger.info("Closed wind dataset.")
 
     @profile_stage
     def export_results(self) -> None:
@@ -495,14 +549,18 @@ class WWTEPipeline:
 
             out_nc = os.path.join(dir_out, f"wwte_{wind_file_suffix}_combined.nc")
             climatology_ds.to_netcdf(out_nc)
-            print(f"Monthly climatology NetCDF exported: {out_nc}")
-            
+            rel_out_nc = os.path.relpath(out_nc, self.base_dir)
+            print(f"Monthly climatology NetCDF exported: {rel_out_nc}")
+            logging.info(f"Monthly climatology NetCDF exported: {rel_out_nc}")
+
             # Also export to climatology folder for direct use in plot_climatology.py
             climatology_dir = os.path.join(dir_out, 'climatology')
             os.makedirs(climatology_dir, exist_ok=True)
             climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
             climatology_ds.to_netcdf(climatology_out_nc)
-            print(f"Climatology NetCDF exported to: {climatology_out_nc}")
+            rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
+            print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+            logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
             
             combined_ds.close()
             climatology_ds.close()
@@ -524,7 +582,9 @@ class WWTEPipeline:
                 
             out_csv = os.path.join(dir_out, f"wwte_summary_{wind_file_suffix}.csv")
             df.to_csv(out_csv, index=False)
-            print(f"Tabular summary exported: {out_csv}")
+            rel_out_csv = os.path.relpath(out_csv, self.base_dir)
+            print(f"Tabular summary exported: {rel_out_csv}")
+            logging.info(f"Tabular summary exported: {rel_out_csv}")
         else:
             print("\n[PIPELINE WARNING] No records found. Verify that input AOD files exist and extensions match.")
 
@@ -545,6 +605,7 @@ def main() -> None:
         pipeline.run_spatial_analysis()
         pipeline.export_results()
         print("\nPipeline execution sequence completed.")
+        logging.info("Pipeline execution sequence completed.")
         
         # Force garbage collection before shutdown to prevent rioxarray/rasterio
         # file handle errors during Python interpreter teardown
@@ -556,6 +617,8 @@ def main() -> None:
         print("\n" + "#"*40)
         print(" [FATAL ERROR] Pipeline crashed during execution!")
         print("#"*40 + "\n")
+        logging.error("[FATAL ERROR] Pipeline crashed during execution!")
+        logging.error(traceback.format_exc())
         traceback.print_exc()
         sys.exit(1)
 
@@ -564,3 +627,5 @@ if __name__ == "__main__":
     main()
     # Suppress rasterio/rioxarray shutdown errors (harmless file handle cleanup)
     sys.excepthook = lambda *_: None
+
+# NOTE: All major steps, errors, and exceptions are logged to pipeline.log for traceability.

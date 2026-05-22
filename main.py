@@ -9,11 +9,21 @@
 # python main.py
 #
 
+
 import os
 import sys
 import subprocess
 import time
 import json
+import logging
+
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    filename="pipeline.log",
+    filemode="w",  # Overwrite log file on each run
+    format="%(asctime)s %(levelname)s: %(message)s",
+    level=logging.INFO
+)
 
 def run_script(script_path):
     """
@@ -23,6 +33,7 @@ def run_script(script_path):
     print("\n" + "="*80)
     print(f"🚀 RUNNING PIPELINE COMPONENT: {script_name}")
     print("="*80)
+    logging.info(f"RUNNING PIPELINE COMPONENT: {script_name}")
     
     start_time = time.time()
     try:
@@ -39,24 +50,28 @@ def run_script(script_path):
         if process.stdout is not None:
             for line in process.stdout:
                 print(line, end="")
-            
+                logging.info(f"{script_name}: {line.strip()}")
         process.wait()
         elapsed = time.time() - start_time
         
         if process.returncode == 0:
             print(f"\n✅ {script_name} finished successfully in {elapsed:.2f} seconds.")
+            logging.info(f"{script_name} finished successfully in {elapsed:.2f} seconds.")
             return True
         else:
             print(f"\n❌ {script_name} crashed with return code {process.returncode} after {elapsed:.2f} seconds.")
+            logging.error(f"{script_name} crashed with return code {process.returncode} after {elapsed:.2f} seconds.")
             return False
             
     except Exception as e:
         print(f"\n❌ Failed to run {script_name}: {e}")
+        logging.exception(f"Failed to run {script_name}: {e}")
         return False
 
 def main():
     """
     Main entry point coordinates both analysis and plotting components end-to-end.
+    All major steps and errors are logged to pipeline.log for traceability.
     """
     config_path = os.path.join("config", "config.json")
     wind_banner = "unknown"
