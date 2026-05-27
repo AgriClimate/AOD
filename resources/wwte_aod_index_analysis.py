@@ -207,26 +207,62 @@ class WWTEPipeline:
         mm = f"{int(month):02d}"
         return os.path.join(dir_hotspot, f"binary_Avg_AOD_24yr_Month{mm}_2001_2024.tif")
 
-    def _get_country_mask(self, country_name: str, lons: np.ndarray, lats: np.ndarray, ref_ds: xr.Dataset) -> np.ndarray:
+    def _get_country_mask(self, country_name: str, lons: np.ndarray, lats: np.ndarray, ref_ds: xr.Dataset, bbox: Dict[str, float]) -> np.ndarray:
         """
         Creates a boolean mask for the specified country using Natural Earth boundaries.
         """
+        # Prefer a local shapefile in the workspace if present
         try:
-            world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+            shp_rel = self.config.get('directories', {}).get('shapefiles', 'inputs/Shpefile')
         except Exception:
-            # For newer geopandas versions where datasets is deprecated
-            import geodatasets
-            world = gpd.read_file(geodatasets.data.naturalearth.land110)
+            shp_rel = 'inputs/Shpefile'
+        local_world_path = os.path.join(self.base_dir, shp_rel, 'world_countries.geojson')
 
-        country = world[world['name'].str.lower() == country_name.lower()]
-        if country.empty:
-            # Try partial match
-            country = world[world['name'].str.lower().str.contains(country_name.lower())]
-        if country.empty:
-            print(f"[WARNING] Country '{country_name}' not found. Using full domain.")
+        world = None
+        if os.path.exists(local_world_path):
+            try:
+                world = gpd.read_file(local_world_path)
+            except Exception:
+                print(f"[WARNING] Failed to read local world boundaries at {local_world_path}. Will try geopandas datasets.")
+
+        if world is None:
+            try:
+                world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+            except Exception:
+                print("[WARNING] Could not load built-in naturalearth dataset via geopandas. No country mask will be applied.")
+                return np.ones((len(lats), len(lons)), dtype=bool)
+
+        # Try several common name fields (case-sensitive keys from various geojsons)
+        name_cols = ['name', 'NAME', 'ADMIN', 'NAME_LONG', 'NAME_EN', 'SOVEREIGNT']
+        country = None
+        for col in name_cols:
+            if col in world.columns:
+                try:
+                    country = world[world[col].str.lower() == country_name.lower()]
+                    if country.empty:
+                        country = world[world[col].str.lower().str.contains(country_name.lower())]
+                except Exception:
+                    country = None
+                if country is not None and not country.empty:
+                    break
+
+        if country is None or country.empty:
+            print(f"[WARNING] Country '{country_name}' not found in available boundaries. Using full domain.")
+            return np.ones((len(lats), len(lons)), dtype=bool)
+        # Compute intersection between country geometry and requested bounding box
+        from shapely.geometry import box
+        country_geom = country.geometry.unary_union
+        bbox_geom = box(float(bbox['min_lon']), float(bbox['min_lat']), float(bbox['max_lon']), float(bbox['max_lat']))
+        intersection = country_geom.intersection(bbox_geom)
+        if intersection.is_empty:
+            # No overlap between country and bbox: inform user and fallback
+            cbounds = country_geom.bounds
+            print(f"[WARNING] Country '{country_name}' does not intersect bounding_box.")
+            print(f"Country spatial bounds: minx={cbounds[0]:.3f}, miny={cbounds[1]:.3f}, maxx={cbounds[2]:.3f}, maxy={cbounds[3]:.3f}")
+            print("Please update 'parameters.bounding_box' so it intersects the requested country geometry. Proceeding with full bounding_box domain.")
             return np.ones((len(lats), len(lons)), dtype=bool)
 
-        # Create a dummy DataArray on the reference grid and clip to country geometry
+        # Create a dummy DataArray on the reference grid and clip to the intersection geometry
         dummy = xr.DataArray(
             np.ones((len(lats), len(lons)), dtype=np.float32),
             dims=('y', 'x'),
@@ -234,10 +270,10 @@ class WWTEPipeline:
         )
         dummy.rio.write_crs("EPSG:4326", inplace=True)
         try:
-            clipped = dummy.rio.clip(country.geometry.apply(mapping), all_touched=True)
+            clipped = dummy.rio.clip([mapping(intersection)], all_touched=True)
             mask = np.isfinite(clipped.values)
         except Exception:
-            print(f"[WARNING] Failed to clip to '{country_name}'. Using full domain.")
+            print(f"[WARNING] Failed to clip to intersection of '{country_name}' and bounding_box. Using full domain.")
             mask = np.ones((len(lats), len(lons)), dtype=bool)
         return mask
 
@@ -400,11 +436,12 @@ class WWTEPipeline:
 
                 
                 logger.info("--- Start: Transport analysis ---")
-                source_country = self.config.get('source_country', 'full_domain')
-                if source_country.lower() == 'full_domain':
+                # Config key: 'index_calculation_ares' controls which pixels are used for index calculation
+                index_area = self.config.get('index_calculation_ares', 'full_domain')
+                if isinstance(index_area, str) and index_area.lower() == 'full_domain':
                     country_mask = np.ones_like(aod_arr, dtype=bool)
                 else:
-                    country_mask = self._get_country_mask(source_country, lons, lats, ref_ds)
+                    country_mask = self._get_country_mask(index_area, lons, lats, ref_ds, bbox)
 
                 hotspot_mask = np.isfinite(hotspot_arr) & (hotspot_arr > 0)
                 if aod_source_mode == "hotspot":
@@ -610,14 +647,32 @@ class WWTEPipeline:
             if climatology_parts:
                 climatology_ds = xr.concat(climatology_parts, dim='month', coords='minimal', compat='override')
 
-                # Export climatology to the dedicated climatology folder for downstream use
+                # Export climatology according to requested output format in config
+                clim_format = str(self.config.get('climatology_format', 'nc')).lower()
                 climatology_dir = os.path.join(dir_out, 'climatology')
                 os.makedirs(climatology_dir, exist_ok=True)
-                climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
-                climatology_ds.to_netcdf(climatology_out_nc)
-                rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
-                print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
-                logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+
+                if clim_format in ('nc', 'netcdf'):
+                    climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+                    climatology_ds.to_netcdf(climatology_out_nc)
+                    rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
+                    print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+                    logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+
+                elif clim_format in ('tif', 'tiff'):
+                    # When TIFFs are requested, skip writing the combined NetCDF here.
+                    # The separate `calculate_climatology.py` utility will read monthly files
+                    # and produce multi-band GeoTIFFs. We still ensure the directory exists.
+                    print("Climatology configured as TIFF: skipping NetCDF export (GeoTIFFs will be generated separately).")
+                    logging.info("Climatology configured as TIFF: skipping NetCDF export (GeoTIFFs will be generated separately).")
+
+                else:
+                    # Unknown format: default to NetCDF for backward compatibility
+                    climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+                    climatology_ds.to_netcdf(climatology_out_nc)
+                    rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
+                    print(f"Climatology NetCDF exported to: {rel_climatology_out_nc} (default)")
+                    logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc} (default)")
 
                 climatology_ds.close()
 
