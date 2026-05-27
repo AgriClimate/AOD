@@ -251,16 +251,29 @@ class WWTEPipeline:
             return np.ones((len(lats), len(lons)), dtype=bool)
         # Compute intersection between country geometry and requested bounding box
         from shapely.geometry import box
-        country_geom = country.geometry.unary_union
+        # Use GeoPandas' union_all to combine multi-features (replaces deprecated unary_union)
+        try:
+            country_geom = country.geometry.union_all()
+        except Exception:
+            # Fallback to unary_union if union_all not available for older geopandas
+            try:
+                country_geom = country.geometry.unary_union
+            except Exception:
+                # As a last resort, use the unary bounds of all geometries
+                country_geom = country.geometry.values[0]
+
         bbox_geom = box(float(bbox['min_lon']), float(bbox['min_lat']), float(bbox['max_lon']), float(bbox['max_lat']))
         intersection = country_geom.intersection(bbox_geom)
         if intersection.is_empty:
-            # No overlap between country and bbox: inform user and fallback
             cbounds = country_geom.bounds
-            print(f"[WARNING] Country '{country_name}' does not intersect bounding_box.")
-            print(f"Country spatial bounds: minx={cbounds[0]:.3f}, miny={cbounds[1]:.3f}, maxx={cbounds[2]:.3f}, maxy={cbounds[3]:.3f}")
-            print("Please update 'parameters.bounding_box' so it intersects the requested country geometry. Proceeding with full bounding_box domain.")
-            return np.ones((len(lats), len(lons)), dtype=bool)
+            msg = (
+                f"Country '{country_name}' does not intersect bounding_box. "
+                f"Country bounds: minx={cbounds[0]:.3f}, miny={cbounds[1]:.3f}, "
+                f"maxx={cbounds[2]:.3f}, maxy={cbounds[3]:.3f}. "
+                "Please update 'parameters.bounding_box' so it intersects the requested country geometry."
+            )
+            # Raise an explicit error so the user can correct their configuration
+            raise ValueError(msg)
 
         # Rasterize the intersection geometry onto the reference grid so the
         # returned mask has the same shape as the reference coordinates.
