@@ -61,12 +61,8 @@ def main() -> None:
     
     in_file = os.path.join(base_dir, dirs['output'], f"wwte_{wind_file_suffix}_combined.nc")
     out_dir = os.path.join(base_dir, dirs['output'], 'climatology')
-    
+
     os.makedirs(out_dir, exist_ok=True)
-    
-    if not os.path.exists(in_file):
-        print(f"Error: Combined model output file not found: {in_file}. Run analysis script first.")
-        return
         
     print(f"Loading combined dataset: {os.path.basename(in_file)}")
 
@@ -115,6 +111,10 @@ def main() -> None:
             # Concatenate all datasets along the new/expanded 'time' dimension
             ds = xr.concat(ds_list, dim='time', data_vars='minimal', coords='minimal', compat='override')
         else:
+            # No monthly files found; fall back to the combined NetCDF if available
+            if not os.path.exists(in_file):
+                print(f"Error: Combined model output file not found: {in_file}. Run analysis script first.")
+                return
             print("Monthly files not found; falling back to combined file.")
             ds = xr.open_dataset(in_file)
 
