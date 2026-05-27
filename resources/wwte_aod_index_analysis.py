@@ -152,7 +152,8 @@ class WWTEPipeline:
         self.config_path = os.path.join(self.base_dir, config_path)
         self.config: Optional[Dict[str, Any]] = None
         self.sink: Optional[SinkLocation] = None
-        self.monthly_datasets: List[xr.Dataset] = []
+        # Store paths to per-month output files (written to disk immediately)
+        self.monthly_files: List[str] = []
         self.records: List[Dict[str, Any]] = []
 
     @profile_stage
@@ -501,14 +502,27 @@ class WWTEPipeline:
                     }
                 )
                 ds_out.rio.write_crs("EPSG:4326", inplace=True)
-                self.monthly_datasets.append(ds_out)
+                # Write per-month dataset to disk immediately to reduce memory usage
+                out_dir_monthly = os.path.join(self.base_dir, dirs['output'], 'monthly')
+                os.makedirs(out_dir_monthly, exist_ok=True)
+                out_monthly_path = os.path.join(out_dir_monthly, f"wwte_{wind_file_suffix}_{year_month}.nc")
+                ds_out.to_netcdf(out_monthly_path)
+                self.monthly_files.append(out_monthly_path)
 
-                # Cleanup
+                # Close dataset and free large arrays to reduce memory footprint
+                ds_out.close()
                 da_aod_raw.close()
                 da_hotspot_raw.close()
                 da_aod_crop.close()
                 da_hotspot_crop.close()
-                logger.info(f"Finished processing {year_month} successfully.")
+                # Explicitly delete large numpy arrays and collect garbage
+                try:
+                    del aod_arr, hotspot_arr, u_arr, v_arr, wind_mag, score, weight, dist_decay, cosang
+                except Exception:
+                    pass
+                import gc
+                gc.collect()
+                logger.info(f"Finished processing {year_month} successfully. Saved: {os.path.relpath(out_monthly_path, self.base_dir)}")
 
             except Exception as e:
                 logger.error(f"Error executing year-month {year_month}: {e}")
@@ -528,47 +542,89 @@ class WWTEPipeline:
         wind_file_suffix = self._resolve_wind_suffix()
         
         # Write unified multi-year NetCDF (monthly climatology: average Jan, Feb, ... Dec across all years)
-        if self.monthly_datasets:
-            print("\nComputing monthly climatology (mean across years per month)...")
-            
-            combined_ds = xr.concat(self.monthly_datasets, dim='time')
-            combined_ds = combined_ds.sortby('time')
-            
-            # Group by month and take the mean across years
-            climatology_ds = combined_ds.groupby('time.month').mean(dim='time')
-            
-            # Ensure coordinates are named lat/lon for compatibility
-            rename_map = {}
-            if 'x' in climatology_ds.dims and 'lon' not in climatology_ds.dims:
-                rename_map['x'] = 'lon'
-            if 'y' in climatology_ds.dims and 'lat' not in climatology_ds.dims:
-                rename_map['y'] = 'lat'
-            if rename_map:
-                climatology_ds = climatology_ds.rename(rename_map)
-                combined_ds = combined_ds.rename(rename_map)
+        if self.monthly_files:
+            print("\nComputing monthly climatology (mean across years per month) from on-disk monthly files...")
 
-            out_nc = os.path.join(dir_out, f"wwte_{wind_file_suffix}_combined.nc")
-            climatology_ds.to_netcdf(out_nc)
-            rel_out_nc = os.path.relpath(out_nc, self.base_dir)
-            print(f"Monthly climatology NetCDF exported: {rel_out_nc}")
-            logging.info(f"Monthly climatology NetCDF exported: {rel_out_nc}")
+            # Accumulate per-month sums and counts to avoid loading all months at once
+            month_sums: Dict[int, xr.Dataset] = {}
+            month_counts: Dict[int, int] = {}
 
-            # Also export to climatology folder for direct use in plot_climatology.py
-            climatology_dir = os.path.join(dir_out, 'climatology')
-            os.makedirs(climatology_dir, exist_ok=True)
-            climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
-            climatology_ds.to_netcdf(climatology_out_nc)
-            rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
-            print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
-            logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
-            
-            combined_ds.close()
-            climatology_ds.close()
-            
-            # Close all cached monthly datasets to prevent shutdown errors
-            for ds in self.monthly_datasets:
+            for mf in sorted(self.monthly_files):
+                try:
+                    ds = xr.open_dataset(mf)
+                except Exception as e:
+                    logging.warning(f"Failed to open monthly file {mf}: {e}")
+                    continue
+
+                # Normalize dimension names if needed
+                rename_map = {}
+                if 'x' in ds.dims and 'lon' not in ds.dims:
+                    rename_map['x'] = 'lon'
+                if 'y' in ds.dims and 'lat' not in ds.dims:
+                    rename_map['y'] = 'lat'
+                if rename_map:
+                    ds = ds.rename(rename_map)
+
+                # Extract month integer from time coordinate
+                try:
+                    m = int(pd.to_datetime(ds['time'].values).month)
+                except Exception:
+                    # Fallback: try parsing from filename
+                    basename = os.path.basename(mf)
+                    parts = basename.split('_')
+                    mm = parts[-1].split('.')[0] if parts else '01'
+                    m = int(mm.split('-')[-1].split('.')[0]) if '-' in mm else int(mm[:2])
+
+                # Convert all data variables to float64 for safe accumulation
+                ds_float = ds.copy(deep=True)
+                for vn in list(ds.data_vars):
+                    try:
+                        ds_float[vn] = ds[vn].astype('float64')
+                    except Exception:
+                        ds_float[vn] = ds[vn].astype('float64', copy=False)
+
+                if m not in month_sums:
+                    month_sums[m] = ds_float
+                    month_counts[m] = 1
+                else:
+                    month_sums[m] = month_sums[m] + ds_float
+                    month_counts[m] += 1
+
                 ds.close()
-            self.monthly_datasets.clear()
+                try:
+                    del ds, ds_float
+                except Exception:
+                    pass
+                import gc
+                gc.collect()
+
+            # Build climatology dataset by averaging accumulated sums per month
+            climatology_parts: List[xr.Dataset] = []
+            for month in sorted(month_sums.keys()):
+                s = month_sums[month]
+                cnt = max(1, month_counts.get(month, 1))
+                mean_ds = s / cnt
+                mean_ds = mean_ds.expand_dims({'month': [month]})
+                climatology_parts.append(mean_ds)
+
+            if climatology_parts:
+                climatology_ds = xr.concat(climatology_parts, dim='month')
+
+                # Export climatology to the dedicated climatology folder for downstream use
+                climatology_dir = os.path.join(dir_out, 'climatology')
+                os.makedirs(climatology_dir, exist_ok=True)
+                climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+                climatology_ds.to_netcdf(climatology_out_nc)
+                rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
+                print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+                logging.info(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
+
+                climatology_ds.close()
+
+            # Cleanup temporary monthly file list to release references
+            month_sums.clear()
+            month_counts.clear()
+            self.monthly_files.clear()
             
         # Write tabular CSV summary
         if self.records:
