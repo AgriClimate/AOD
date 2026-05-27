@@ -608,7 +608,7 @@ class WWTEPipeline:
                 climatology_parts.append(mean_ds)
 
             if climatology_parts:
-                climatology_ds = xr.concat(climatology_parts, dim='month', coords='minimal')
+                climatology_ds = xr.concat(climatology_parts, dim='month', coords='minimal', compat='override')
 
                 # Export climatology to the dedicated climatology folder for downstream use
                 climatology_dir = os.path.join(dir_out, 'climatology')
