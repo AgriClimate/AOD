@@ -539,17 +539,7 @@ class WWTEPipeline:
         dir_out = os.path.join(self.base_dir, dirs['output'])
         os.makedirs(dir_out, exist_ok=True)
         
-        # Allow disabling consolidation (climatology + CSV) via config
-        consolidate = True
-        if self.config:
-            consolidate = bool(self.config.get('consolidate_outputs', True))
-
         wind_file_suffix = self._resolve_wind_suffix()
-
-        if not consolidate:
-            print(f"Consolidation disabled by config (consolidate_outputs=False). Skipping export_results.")
-            logging.info("Consolidation disabled by config (consolidate_outputs=False). Skipping export_results.")
-            return
         
         # Write unified multi-year NetCDF (monthly climatology: average Jan, Feb, ... Dec across all years)
         if self.monthly_files:
