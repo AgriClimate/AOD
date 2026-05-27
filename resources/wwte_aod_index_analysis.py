@@ -342,6 +342,17 @@ class WWTEPipeline:
         ref_ds.rio.write_crs("EPSG:4326", inplace=True)
         logger.info(f"Reference grid shapes: lons={lons.shape}, lats={lats.shape}")
 
+        # Pre-check: ensure the requested index_calculation_ares intersects the bounding box
+        index_area_cfg = self.config.get('index_calculation_ares', 'full_domain')
+        if isinstance(index_area_cfg, str) and index_area_cfg.lower() != 'full_domain':
+            # Call _get_country_mask once to validate intersection; it will raise ValueError if no intersection
+            try:
+                _ = self._get_country_mask(index_area_cfg, lons, lats, ref_ds, bbox)
+                logger.info(f"Index calculation area '{index_area_cfg}' intersects bounding_box.")
+            except Exception as e:
+                logger.error(f"Index area validation failed: {e}")
+                raise
+
         # Load wind global database
         wind_path = os.path.join(
             dir_wind, 
