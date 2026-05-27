@@ -60,6 +60,7 @@ class VisualizerConfig:
     extent: List[float] = field(default_factory=lambda: [30.0, 75.0, 11.0, 53.0])
     color_palette: List[str] = field(default_factory=lambda: ['#ffcc00', '#ff6600', '#cc0000', '#660000'])
     categories: List[str] = field(default_factory=lambda: ['Low', 'Medium', 'High', 'Extreme'])
+    show_sink_state_icon: bool = True
 
 
 class GeospatialBoundaryManager:
@@ -297,18 +298,19 @@ class PremiumPlotter:
                     transform=ax.transAxes, fontsize=16, color='gray', fontstyle='italic'
                 )
 
-            # Mark Sink Location
-            ax.plot(
-                self.config.target_lon, 
-                self.config.target_lat, 
-                marker='*', 
-                color='#1e90ff', 
-                markersize=12, 
-                markeredgecolor='black', 
-                markeredgewidth=1.5,
-                zorder=5,
-                label=f"Sink: {self.config.sink_name}"
-            )
+            # Mark Sink Location (optional star icon controlled by config)
+            if getattr(self.config, 'show_sink_state_icon', True):
+                ax.plot(
+                    self.config.target_lon,
+                    self.config.target_lat,
+                    marker='*',
+                    color='#1e90ff',
+                    markersize=12,
+                    markeredgecolor='black',
+                    markeredgewidth=1.5,
+                    zorder=5,
+                    label=f"Sink: {self.config.sink_name}"
+                )
 
             # Titles & Axes
             ax.set_xlim(self.config.extent[0], self.config.extent[1])
@@ -328,6 +330,13 @@ class PremiumPlotter:
         
         plt.tight_layout()
         out_path = os.path.join(self.config.plots_dir, f"climatology_wwte_score_{self.config.wind_file_suffix}_{mm}.png")
+        # Ensure directory exists and save the figure
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        try:
+            fig.savefig(out_path, dpi=300)
+        finally:
+            plt.close(fig)
+
         rel_out_path = os.path.relpath(out_path, self.config.plots_dir)
         print(f"[PLOT SUCCESS] Saved advanced plot: {os.path.join('outputs/plots', rel_out_path)}")
         logger.info(f"[PLOT SUCCESS] Saved advanced plot: {os.path.join('outputs/plots', rel_out_path)}")
@@ -402,6 +411,9 @@ class WWTEVisualizerPipeline:
         
         output_dir = os.path.join(self.base_dir, dirs['output'])
 
+        # Plot options
+        show_icon = bool(self.config_data.get('plot_options', {}).get('show_sink_state_icon', True))
+
         self.visualizer_config = VisualizerConfig(
             sink_name=sink_name.split(',')[0].strip(),
             target_lon=lon,
@@ -413,6 +425,7 @@ class WWTEVisualizerPipeline:
             plots_dir=plots_dir,
             decay_length_km=decay_length,
             extent=extent
+            ,show_sink_state_icon=show_icon
         )
 
         self.boundaries = GeospatialBoundaryManager(self.base_dir)

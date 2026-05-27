@@ -17,6 +17,9 @@
         "lon": 61.49,
         "lat": 31.03
     },
+    "plot_options": {
+        "show_sink_state_icon": false
+    },
     "parameters": {
         "zabol_buffer_deg": 0.3,
         "decay_length_km": 800.0,
