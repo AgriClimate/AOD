@@ -24,10 +24,16 @@ import json
 import os
 import glob
 import xarray as xr
+import numpy as np
 import warnings
 
 
 warnings.filterwarnings("ignore", message="Mean of empty slice")
+try:
+    import rasterio
+    from rasterio.transform import from_origin
+except Exception:
+    rasterio = None
 
 
 def main() -> None:
@@ -71,9 +77,11 @@ def main() -> None:
         monthly_files = sorted(glob.glob(pattern))
         if monthly_files:
             print(f"Opening {len(monthly_files)} monthly files with xarray.open_mfdataset...")
+            # Use nested combine along the time dimension when files lack reliable
+            # coordinate ordering information.
             ds = xr.open_mfdataset(
                 monthly_files,
-                combine='by_coords',
+                combine='nested',
                 concat_dim='time',
                 coords='minimal',
                 compat='override',
@@ -86,6 +94,9 @@ def main() -> None:
         # Calculate the long-term monthly climatology across the time dimension
         print(f"Calculating climatology for all 12 months using xarray groupby...")
         climatology = ds.groupby('time.month').mean(dim='time', skipna=True)
+
+        # Determine output format: 'nc' (NetCDF) or 'tif'/'tiff' (GeoTIFFs)
+        out_format = str(config.get('climatology_format', 'nc')).lower()
         
         # Retain coordinate reference system if present
         if "spatial_ref" in ds.coords:
@@ -93,10 +104,78 @@ def main() -> None:
             
         climatology.attrs["description"] = f"Long-term climatology averages (1-12) using {wind_file_suffix} wind model"
         
-        # Save to a single combined climatology file
-        out_file = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
-        climatology.to_netcdf(out_file)
-        print(f"Successfully saved combined climatology: {out_file}")
+        if out_format in ('nc', 'netcdf'):
+            # Save to a single combined climatology NetCDF file
+            out_file = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+            climatology.to_netcdf(out_file)
+            print(f"Successfully saved combined climatology (NetCDF): {out_file}")
+        elif out_format in ('tif', 'tiff'):
+            # Export per-month GeoTIFFs for each variable
+            if rasterio is None:
+                raise RuntimeError("rasterio is required to export GeoTIFFs but is not available in the environment")
+
+            # Helper to get lon/lat grid
+            def _get_lonlat(ds_obj):
+                if 'lon' in ds_obj.coords and 'lat' in ds_obj.coords:
+                    lons = ds_obj['lon'].values
+                    lats = ds_obj['lat'].values
+                    return lons, lats
+                if 'x' in ds_obj.coords and 'y' in ds_obj.coords:
+                    lons = ds_obj['x'].values
+                    lats = ds_obj['y'].values
+                    return lons, lats
+                raise RuntimeError('No lon/lat or x/y coordinates found for GeoTIFF export')
+
+            lons, lats = _get_lonlat(climatology)
+            nlat = len(lats)
+            nlon = len(lons)
+
+            # compute pixel size (assume regular grid)
+            xres = float((lons.max() - lons.min()) / max(nlon - 1, 1))
+            yres = float((lats.max() - lats.min()) / max(nlat - 1, 1))
+
+            for month in climatology['month'].values:
+                ds_month = climatology.sel(month=month)
+                mm = f"{int(month):02d}"
+                for var in ds_month.data_vars:
+                    arr = ds_month[var].values
+                    # Ensure 2D (lat, lon)
+                    if arr.ndim != 2:
+                        print(f"Skipping variable '{var}' for month {mm}: unsupported dims {arr.shape}")
+                        continue
+
+                    # Rasterio expects data in (bands, rows, cols); we'll write single-band TIFF
+                    out_tif = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{var}_{mm}.tif")
+                    transform = from_origin(lons.min() - xres / 2.0, lats.max() + yres / 2.0, xres, yres)
+
+                    # Determine dtype
+                    dtype = arr.dtype
+                    # Replace NaNs with a nodata value and cast
+                    nodata = -9999
+                    write_arr = arr.copy()
+                    write_arr = write_arr.astype('float32')
+                    write_arr[np.isnan(write_arr)] = nodata
+
+                    os.makedirs(os.path.dirname(out_tif), exist_ok=True)
+                    with rasterio.Env():
+                        with rasterio.open(
+                            out_tif,
+                            'w',
+                            driver='GTiff',
+                            height=write_arr.shape[0],
+                            width=write_arr.shape[1],
+                            count=1,
+                            dtype='float32',
+                            crs='EPSG:4326',
+                            transform=transform,
+                            nodata=nodata,
+                            compress='deflate'
+                        ) as dst:
+                            dst.write(write_arr, 1)
+
+                    print(f"Saved GeoTIFF: {out_tif}")
+        else:
+            raise ValueError(f"Unsupported climatology_format: {out_format}. Use 'nc' or 'tif'.")
         
         ds.close()
         climatology.close()
