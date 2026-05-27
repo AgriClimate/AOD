@@ -8,11 +8,11 @@
         "output": "outputs/results",
         "plots": "outputs/plots"
     },
-    "source_country": "full_domain",
+    "index_calculation_ares": "Afghanistan",
     "aod_source_mode": "hotspot",
     "aod_threshold": null,
     "active_wind_type": "wind10m",
-    "climatology_format": "nc",
+    "climatology_format": "tiff",
     "sink_location": {
         "name": "Zabol",
         "lon": 61.49,
@@ -27,10 +27,10 @@
         "af_high_aod_quantile": 0.75,
         "resolution_deg": 0.1,
         "bounding_box": {
-            "min_lon": 30.0,
-            "max_lon": 75.0,
-            "min_lat": 11.0,
-            "max_lat": 53.0
+            "min_lon": 60.0,
+            "max_lon": 76.0,
+            "min_lat": 29.0,
+            "max_lat": 39.0
         }
     }
 }
