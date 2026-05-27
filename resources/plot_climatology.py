@@ -489,6 +489,39 @@ class WWTEVisualizerPipeline:
             clim_dir = os.path.join(self.visualizer_config.output_dir, 'climatology')
             for month in range(1, 13):
                 mm = f"{month:02d}"
+                # Prefer a single multi-band GeoTIFF per month
+                multi_path = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_{mm}.tif")
+                if os.path.exists(multi_path):
+                    with rasterio.open(multi_path) as src:
+                        count = src.count
+                        width = src.width
+                        height = src.height
+                        transform = src.transform
+                        xs = transform.c + np.arange(width) * transform.a
+                        ys = transform.f - np.arange(height) * abs(transform.e)
+                        lons = xs
+                        lats = ys
+
+                        data_vars = {}
+                        band_descriptions = src.descriptions if src.descriptions is not None else [f"band{i+1}" for i in range(count)]
+                        for i in range(count):
+                            arr = src.read(i+1).astype('float32')
+                            if src.nodata is not None:
+                                arr = np.where(arr == src.nodata, np.nan, arr)
+                            varname = band_descriptions[i] if band_descriptions[i] is not None else f"band{i+1}"
+                            data_vars[varname] = (('lat', 'lon'), arr)
+
+                    ds_month = xr.Dataset(
+                        {k: xr.DataArray(v[1], dims=('lat', 'lon')) for k, v in data_vars.items()},
+                        coords={'lon': lons, 'lat': lats}
+                    )
+
+                    lon2d, lat2d = np.meshgrid(lons, lats)
+                    plot_path = self.plotter.plot_month_climatology(month, ds_month, lon2d, lat2d)
+                    plotted_files.append(plot_path)
+                    continue
+
+                # Fallback: read multiple single-band TIFFs for this month
                 pattern = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_*_{mm}.tif")
                 tif_files = sorted([p for p in glob.glob(pattern)])
                 if not tif_files:

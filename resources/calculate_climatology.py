@@ -110,7 +110,7 @@ def main() -> None:
             climatology.to_netcdf(out_file)
             print(f"Successfully saved combined climatology (NetCDF): {out_file}")
         elif out_format in ('tif', 'tiff'):
-            # Export per-month GeoTIFFs for each variable
+            # Export per-month multi-band GeoTIFFs (bands == variables)
             if rasterio is None:
                 raise RuntimeError("rasterio is required to export GeoTIFFs but is not available in the environment")
 
@@ -137,43 +137,53 @@ def main() -> None:
             for month in climatology['month'].values:
                 ds_month = climatology.sel(month=month)
                 mm = f"{int(month):02d}"
-                for var in ds_month.data_vars:
-                    arr = ds_month[var].values
-                    # Ensure 2D (lat, lon)
-                    if arr.ndim != 2:
-                        print(f"Skipping variable '{var}' for month {mm}: unsupported dims {arr.shape}")
-                        continue
 
-                    # Rasterio expects data in (bands, rows, cols); we'll write single-band TIFF
-                    out_tif = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{var}_{mm}.tif")
-                    transform = from_origin(lons.min() - xres / 2.0, lats.max() + yres / 2.0, xres, yres)
+                vars_2d = [v for v in ds_month.data_vars if ds_month[v].ndim == 2]
+                if not vars_2d:
+                    print(f"No 2D variables to export for month {mm}")
+                    continue
 
-                    # Determine dtype
-                    dtype = arr.dtype
-                    # Replace NaNs with a nodata value and cast
-                    nodata = -9999
-                    write_arr = arr.copy()
-                    write_arr = write_arr.astype('float32')
-                    write_arr[np.isnan(write_arr)] = nodata
+                # Build stacked array (bands, rows, cols)
+                band_arrays = []
+                band_names = []
+                for var in vars_2d:
+                    arr = ds_month[var].values.astype('float32')
+                    band_arrays.append(arr)
+                    band_names.append(var)
 
-                    os.makedirs(os.path.dirname(out_tif), exist_ok=True)
-                    with rasterio.Env():
-                        with rasterio.open(
-                            out_tif,
-                            'w',
-                            driver='GTiff',
-                            height=write_arr.shape[0],
-                            width=write_arr.shape[1],
-                            count=1,
-                            dtype='float32',
-                            crs='EPSG:4326',
-                            transform=transform,
-                            nodata=nodata,
-                            compress='deflate'
-                        ) as dst:
-                            dst.write(write_arr, 1)
+                stack = np.stack(band_arrays, axis=0)
 
-                    print(f"Saved GeoTIFF: {out_tif}")
+                # Replace NaNs with nodata
+                nodata = -9999.0
+                stack = np.where(np.isnan(stack), nodata, stack)
+
+                out_tif = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{mm}.tif")
+                transform = from_origin(lons.min() - xres / 2.0, lats.max() + yres / 2.0, xres, yres)
+
+                os.makedirs(os.path.dirname(out_tif), exist_ok=True)
+                with rasterio.Env():
+                    with rasterio.open(
+                        out_tif,
+                        'w',
+                        driver='GTiff',
+                        height=stack.shape[1],
+                        width=stack.shape[2],
+                        count=stack.shape[0],
+                        dtype='float32',
+                        crs='EPSG:4326',
+                        transform=transform,
+                        nodata=nodata,
+                        compress='deflate'
+                    ) as dst:
+                        for band_index in range(stack.shape[0]):
+                            dst.write(stack[band_index, :, :], band_index + 1)
+                        # store variable names as band descriptions
+                        try:
+                            dst.descriptions = tuple(band_names)
+                        except Exception:
+                            pass
+
+                print(f"Saved multi-band GeoTIFF: {out_tif} (bands: {', '.join(band_names)})")
         else:
             raise ValueError(f"Unsupported climatology_format: {out_format}. Use 'nc' or 'tif'.")
         
