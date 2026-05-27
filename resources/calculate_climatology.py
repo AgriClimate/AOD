@@ -69,24 +69,51 @@ def main() -> None:
         return
         
     print(f"Loading combined dataset: {os.path.basename(in_file)}")
-    
+
     try:
-        # Prefer reading per-month files with open_mfdataset (more efficient for many files)
+        # Prefer reading per-month files from the `monthly` folder and concatenate
+        # them along a proper `time` dimension. Many monthly files have a scalar
+        # `time` coordinate (no time dimension) so we expand that into a length-1
+        # time dimension per file before concatenation to ensure groupby('time.month') works.
         monthly_dir = os.path.join(base_dir, dirs['output'], 'monthly')
         pattern = os.path.join(monthly_dir, f"wwte_{wind_file_suffix}_*.nc")
         monthly_files = sorted(glob.glob(pattern))
         if monthly_files:
-            print(f"Opening {len(monthly_files)} monthly files with xarray.open_mfdataset...")
-            # Use nested combine along the time dimension when files lack reliable
-            # coordinate ordering information.
-            ds = xr.open_mfdataset(
-                monthly_files,
-                combine='nested',
-                concat_dim='time',
-                coords='minimal',
-                compat='override',
-                parallel=False,
-            )
+            print(f"Opening {len(monthly_files)} monthly files and concatenating along time...")
+            ds_list = []
+            for fpath in monthly_files:
+                ds_f = xr.open_dataset(fpath, decode_times=True)
+                # If `time` is not a dimension but exists as a scalar coord, expand it
+                if 'time' not in ds_f.dims:
+                    if 'time' in ds_f.coords:
+                        time_val = ds_f['time'].values
+                        try:
+                            # wrap as 1-D coordinate
+                            ds_f = ds_f.expand_dims({'time': [time_val]})
+                        except Exception:
+                            # fallback: create a time from filename (YYYY-MM)
+                            import re
+                            m = re.search(r"(\d{4})-(\d{2})", os.path.basename(fpath))
+                            if m:
+                                year = int(m.group(1))
+                                month = int(m.group(2))
+                                ds_f = ds_f.expand_dims({'time': [np.datetime64(f"{year:04d}-{month:02d}-01")]})
+                            else:
+                                raise RuntimeError(f"No usable time coordinate in file: {fpath}")
+                    else:
+                        # try parsing filename for YYYY-MM if no time coord at all
+                        import re
+                        m = re.search(r"(\d{4})-(\d{2})", os.path.basename(fpath))
+                        if m:
+                            year = int(m.group(1))
+                            month = int(m.group(2))
+                            ds_f = ds_f.expand_dims({'time': [np.datetime64(f"{year:04d}-{month:02d}-01")]})
+                        else:
+                            raise RuntimeError(f"No time coordinate found in file {fpath}")
+                ds_list.append(ds_f)
+
+            # Concatenate all datasets along the new/expanded 'time' dimension
+            ds = xr.concat(ds_list, dim='time', data_vars='minimal', coords='minimal', compat='override')
         else:
             print("Monthly files not found; falling back to combined file.")
             ds = xr.open_dataset(in_file)
