@@ -93,6 +93,21 @@ def main():
     if not run_script(analysis_script):
         print("\n❌ Pipeline aborted: Spatial analysis stage failed.")
         sys.exit(1)
+    
+    # 1.5 Conditionally compute/export GeoTIFF climatology if requested in config
+    try:
+        with open(config_path, 'r') as f:
+            cfg_full = json.load(f)
+        climatology_format = str(cfg_full.get('climatology_format', 'nc')).lower()
+    except Exception:
+        climatology_format = 'nc'
+
+    if climatology_format in ('tif', 'tiff'):
+        calc_script = os.path.join("resources", "calculate_climatology.py")
+        print("\nDetected climatology_format='tiff' — generating GeoTIFF climatology now.")
+        if not run_script(calc_script):
+            print("\n❌ Pipeline aborted: Climatology (GeoTIFF) generation failed.")
+            sys.exit(1)
         
     # 2. Run advanced plotting script
     plotting_script = os.path.join("resources", "plot_climatology.py")
