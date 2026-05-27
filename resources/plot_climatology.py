@@ -28,6 +28,9 @@ import geopandas as gpd
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from geopy.geocoders import Nominatim
 import logging
+import rasterio
+from rasterio.transform import from_origin
+import glob
 
 # --- LOGGING SETUP ---
 logging.basicConfig(
@@ -456,34 +459,85 @@ class WWTEVisualizerPipeline:
         print(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
         logger.info(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
 
-        ds = xr.open_dataset(nc_path)
-        
-        # Grid parameters (support both lat/lon and legacy y/x naming)
-        lons = ds['lon'].values if 'lon' in ds.coords else ds['x'].values
-        lats = ds['lat'].values if 'lat' in ds.coords else ds['y'].values
-        lon2d, lat2d = np.meshgrid(lons, lats)
-
-        # Plot all months present in dataset
         plotted_files = []
-        for month in range(1, 13):
-            # Select month dimension (depending on coordinate name 'month' or 'time.month')
-            month_coord = 'month' if 'month' in ds.coords else 'time'
-            
-            if month_coord == 'month':
-                if month not in ds.month.values:
-                    continue
-                ds_month = ds.sel(month=month)
-            else:
-                # time coordinates
-                matching_times = [t for t in ds.time.values if pd.to_datetime(t).month == month]
-                if not matching_times:
-                    continue
-                ds_month = ds.sel(time=matching_times[0])
+        out_format = str(self.config_data.get('climatology_format', 'nc')).lower()
 
-            plot_path = self.plotter.plot_month_climatology(month, ds_month, lon2d, lat2d)
-            plotted_files.append(plot_path)
+        if out_format in ('nc', 'netcdf'):
+            ds = xr.open_dataset(nc_path)
+            lons = ds['lon'].values if 'lon' in ds.coords else ds['x'].values
+            lats = ds['lat'].values if 'lat' in ds.coords else ds['y'].values
+            lon2d, lat2d = np.meshgrid(lons, lats)
 
-        ds.close()
+            # Plot all months present in dataset
+            for month in range(1, 13):
+                month_coord = 'month' if 'month' in ds.coords else 'time'
+                if month_coord == 'month':
+                    if month not in ds.month.values:
+                        continue
+                    ds_month = ds.sel(month=month)
+                else:
+                    matching_times = [t for t in ds.time.values if pd.to_datetime(t).month == month]
+                    if not matching_times:
+                        continue
+                    ds_month = ds.sel(time=matching_times[0])
+
+                plot_path = self.plotter.plot_month_climatology(month, ds_month, lon2d, lat2d)
+                plotted_files.append(plot_path)
+            ds.close()
+        elif out_format in ('tif', 'tiff'):
+            # Load per-month GeoTIFF layers and plot
+            clim_dir = os.path.join(self.visualizer_config.output_dir, 'climatology')
+            for month in range(1, 13):
+                mm = f"{month:02d}"
+                pattern = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_*_{mm}.tif")
+                tif_files = sorted([p for p in glob.glob(pattern)])
+                if not tif_files:
+                    continue
+
+                # Read all TIFFs for the month and build an xarray.Dataset
+                data_vars = {}
+                lons = None
+                lats = None
+                for tif in tif_files:
+                    varname = os.path.basename(tif).replace(f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_", "")
+                    varname = varname.rsplit(f"_{mm}.tif", 1)[0]
+                    with rasterio.open(tif) as src:
+                        arr = src.read(1).astype('float32')
+                        # mask nodata
+                        if src.nodata is not None:
+                            arr = np.where(arr == src.nodata, np.nan, arr)
+                        # compute lon/lat grid from transform
+                        transform = src.transform
+                        width = src.width
+                        height = src.height
+                        x0 = transform.c
+                        y0 = transform.f
+                        xres = transform.a
+                        yres = -transform.e if transform.e < 0 else transform.e
+                        xs = x0 + np.arange(width) * xres
+                        ys = y0 - np.arange(height) * yres
+                        # ensure lons/lats set once
+                        if lons is None:
+                            lons = xs
+                        if lats is None:
+                            lats = ys
+
+                        data_vars[varname] = (('lat', 'lon'), arr)
+
+                if lons is None or lats is None:
+                    continue
+
+                ds_month = xr.Dataset(
+                    {k: xr.DataArray(v[1], dims=('lat', 'lon')) for k, v in data_vars.items()},
+                    coords={'lon': lons, 'lat': lats}
+                )
+
+                lon2d, lat2d = np.meshgrid(lons, lats)
+                plot_path = self.plotter.plot_month_climatology(month, ds_month, lon2d, lat2d)
+                plotted_files.append(plot_path)
+        else:
+            raise ValueError(f"Unsupported climatology_format: {out_format}")
+
         print(f"\n[PIPELINE SUCCESS] Visualizer pipeline completed. Plotted {len(plotted_files)} month(s).")
         logger.info(f"[PIPELINE SUCCESS] Visualizer pipeline completed. Plotted {len(plotted_files)} month(s).")
         print("="*60)
