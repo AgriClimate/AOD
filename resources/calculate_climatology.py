@@ -50,6 +50,14 @@ def main() -> None:
         
     dirs = config['directories']
     wind_type = config.get("active_wind_type", "wind850mb")
+    # include sink name in filenames to avoid overwriting when sink changes
+    sink_name = None
+    try:
+        sink_name = config.get('sink_location', {}).get('name')
+    except Exception:
+        sink_name = None
+    import re
+    sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', str(sink_name).strip().lower()) if sink_name else 'sink'
     
     # Enforce strict naming conventions requested: 'wind10m', 'wind850mb', or 'wind850hp'
     if wind_type in ["10m", "wind10m"]:
@@ -132,8 +140,8 @@ def main() -> None:
         climatology.attrs["description"] = f"Long-term climatology averages (1-12) using {wind_file_suffix} wind model"
         
         if out_format in ('nc', 'netcdf'):
-            # Save to a single combined climatology NetCDF file
-            out_file = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+            # Save to a single combined climatology NetCDF file (include sink slug)
+            out_file = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{sink_slug}_combined.nc")
             climatology.to_netcdf(out_file)
             print(f"Successfully saved combined climatology (NetCDF): {out_file}")
         elif out_format in ('tif', 'tiff'):
@@ -184,7 +192,7 @@ def main() -> None:
                 nodata = -9999.0
                 stack = np.where(np.isnan(stack), nodata, stack)
 
-                out_tif = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{mm}.tif")
+                out_tif = os.path.join(out_dir, f"wwte_climatology_{wind_file_suffix}_{sink_slug}_{mm}.tif")
                 transform = from_origin(lons.min() - xres / 2.0, lats.max() + yres / 2.0, xres, yres)
 
                 os.makedirs(os.path.dirname(out_tif), exist_ok=True)

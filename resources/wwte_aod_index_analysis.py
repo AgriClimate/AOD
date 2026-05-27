@@ -262,18 +262,34 @@ class WWTEPipeline:
             print("Please update 'parameters.bounding_box' so it intersects the requested country geometry. Proceeding with full bounding_box domain.")
             return np.ones((len(lats), len(lons)), dtype=bool)
 
-        # Create a dummy DataArray on the reference grid and clip to the intersection geometry
-        dummy = xr.DataArray(
-            np.ones((len(lats), len(lons)), dtype=np.float32),
-            dims=('y', 'x'),
-            coords={'y': lats, 'x': lons}
-        )
-        dummy.rio.write_crs("EPSG:4326", inplace=True)
+        # Rasterize the intersection geometry onto the reference grid so the
+        # returned mask has the same shape as the reference coordinates.
         try:
-            clipped = dummy.rio.clip([mapping(intersection)], all_touched=True)
-            mask = np.isfinite(clipped.values)
+            # compute grid resolution and origin (assume regular grid)
+            if len(lons) > 1:
+                res_x = float(lons[1] - lons[0])
+            else:
+                res_x = float(bbox['max_lon'] - bbox['min_lon'])
+            if len(lats) > 1:
+                res_y = float(abs(lats[1] - lats[0]))
+            else:
+                res_y = float(bbox['max_lat'] - bbox['min_lat'])
+
+            origin_x = float(lons[0]) - res_x / 2.0
+            origin_y = float(lats[0]) + res_y / 2.0
+
+            from rasterio.features import geometry_mask
+            from rasterio.transform import from_origin
+
+            transform = from_origin(origin_x, origin_y, res_x, res_y)
+            out_shape = (len(lats), len(lons))
+
+            # geometry_mask returns True for pixels outside shapes by default;
+            # set invert=True to get True for pixels inside the intersection
+            mask = geometry_mask([mapping(intersection)], out_shape=out_shape, transform=transform, invert=True)
+            mask = mask.astype(bool)
         except Exception:
-            print(f"[WARNING] Failed to clip to intersection of '{country_name}' and bounding_box. Using full domain.")
+            print(f"[WARNING] Failed to rasterize intersection of '{country_name}' and bounding_box. Using full domain.")
             mask = np.ones((len(lats), len(lons)), dtype=bool)
         return mask
 
@@ -542,7 +558,10 @@ class WWTEPipeline:
                 # Write per-month dataset to disk immediately to reduce memory usage
                 out_dir_monthly = os.path.join(self.base_dir, dirs['output'], 'monthly')
                 os.makedirs(out_dir_monthly, exist_ok=True)
-                out_monthly_path = os.path.join(out_dir_monthly, f"wwte_{wind_file_suffix}_{year_month}.nc")
+                # include sink name in filenames to avoid overwriting when sink changes
+                import re
+                sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', self.sink.name.strip().lower())
+                out_monthly_path = os.path.join(out_dir_monthly, f"wwte_{wind_file_suffix}_{sink_slug}_{year_month}.nc")
                 ds_out.to_netcdf(out_monthly_path)
                 self.monthly_files.append(out_monthly_path)
 
@@ -653,7 +672,9 @@ class WWTEPipeline:
                 os.makedirs(climatology_dir, exist_ok=True)
 
                 if clim_format in ('nc', 'netcdf'):
-                    climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_combined.nc")
+                    import re
+                    sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', self.sink.name.strip().lower())
+                    climatology_out_nc = os.path.join(climatology_dir, f"wwte_climatology_{wind_file_suffix}_{sink_slug}_combined.nc")
                     climatology_ds.to_netcdf(climatology_out_nc)
                     rel_climatology_out_nc = os.path.relpath(climatology_out_nc, self.base_dir)
                     print(f"Climatology NetCDF exported to: {rel_climatology_out_nc}")
@@ -691,7 +712,9 @@ class WWTEPipeline:
             else:
                 df["wwte_index_norm"] = 0.5
                 
-            out_csv = os.path.join(dir_out, f"wwte_summary_{wind_file_suffix}.csv")
+            import re
+            sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', self.sink.name.strip().lower())
+            out_csv = os.path.join(dir_out, f"wwte_summary_{wind_file_suffix}_{sink_slug}.csv")
             df.to_csv(out_csv, index=False)
             rel_out_csv = os.path.relpath(out_csv, self.base_dir)
             print(f"Tabular summary exported: {rel_out_csv}")

@@ -223,6 +223,33 @@ class PremiumPlotter:
         self.world_gdf = boundaries.load_world_boundaries()
         self.iran_gdf = boundaries.load_iran_provinces()
 
+        # If an extent/bounding box is provided, clip vector boundaries to that box
+        try:
+            if hasattr(self.config, 'extent') and self.config.extent is not None:
+                xmin, xmax, ymin, ymax = self.config.extent[0], self.config.extent[1], self.config.extent[2], self.config.extent[3]
+                from shapely.geometry import box
+                bbox_geom = box(xmin, ymin, xmax, ymax)
+                if self.world_gdf is not None and not self.world_gdf.empty:
+                    try:
+                        self.world_gdf = gpd.clip(self.world_gdf, bbox_geom)
+                    except Exception:
+                        # Fallback to .cx selection where available
+                        try:
+                            self.world_gdf = self.world_gdf.cx[xmin:xmax, ymin:ymax]
+                        except Exception:
+                            pass
+                if self.iran_gdf is not None and not self.iran_gdf.empty:
+                    try:
+                        self.iran_gdf = gpd.clip(self.iran_gdf, bbox_geom)
+                    except Exception:
+                        try:
+                            self.iran_gdf = self.iran_gdf.cx[xmin:xmax, ymin:ymax]
+                        except Exception:
+                            pass
+        except Exception:
+            # Be resilient: if clipping fails, continue with full boundaries
+            logger.exception("Failed to clip boundaries to extent; proceeding with full boundaries.")
+
     def generate_discrete_colormap(self, data: np.ndarray) -> Tuple[ListedColormap, BoundaryNorm, List[float]]:
         """
         Creates custom high-contrast color steps based on the empirical quantiles of the active data.
@@ -280,11 +307,20 @@ class PremiumPlotter:
                 cmap, norm, bounds = self.generate_discrete_colormap(data)
                 
                 # Image display
+                # Compute plotting extent from the lon/lat grid to ensure
+                # the plotted domain matches the underlying data (not only config)
+                try:
+                    xmin, xmax = float(lon2d.min()), float(lon2d.max())
+                    ymin, ymax = float(lat2d.min()), float(lat2d.max())
+                    data_extent = [xmin, xmax, ymin, ymax]
+                except Exception:
+                    data_extent = self.config.extent
+
                 im = ax.imshow(
-                    data, 
-                    extent=self.config.extent, 
-                    cmap=cmap, 
-                    norm=norm, 
+                    data,
+                    extent=data_extent,
+                    cmap=cmap,
+                    norm=norm,
                     origin='upper',
                     zorder=1
                 )
@@ -316,8 +352,13 @@ class PremiumPlotter:
                 )
 
             # Titles & Axes
-            ax.set_xlim(self.config.extent[0], self.config.extent[1])
-            ax.set_ylim(self.config.extent[2], self.config.extent[3])
+            # Ensure axis limits match data grid if available
+            try:
+                ax.set_xlim(xmin, xmax)
+                ax.set_ylim(ymin, ymax)
+            except Exception:
+                ax.set_xlim(self.config.extent[0], self.config.extent[1])
+                ax.set_ylim(self.config.extent[2], self.config.extent[3])
             ax.set_title(f"{title} ({self.config.wind_label} - Month {mm})", fontsize=18, fontweight='bold', pad=15)
             ax.set_xlabel('Longitude (°E)', fontsize=12, labelpad=10)
             ax.set_ylabel('Latitude (°N)', fontsize=12, labelpad=10)
@@ -332,7 +373,9 @@ class PremiumPlotter:
         )
         
         plt.tight_layout()
-        out_path = os.path.join(self.config.plots_dir, f"climatology_wwte_score_{self.config.wind_file_suffix}_{mm}.png")
+        import re
+        sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', self.config.sink_name.strip().lower())
+        out_path = os.path.join(self.config.plots_dir, f"climatology_wwte_score_{self.config.wind_file_suffix}_{sink_slug}_{mm}.png")
         # Ensure directory exists and save the figure
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         try:
@@ -444,25 +487,31 @@ class WWTEVisualizerPipeline:
             raise RuntimeError("Pipeline must be initialized before running.")
 
         climatology_dir = os.path.join(self.visualizer_config.output_dir, 'climatology')
-        nc_filename = f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_combined.nc"
-        nc_path = os.path.join(climatology_dir, nc_filename)
-
-        if not os.path.exists(nc_path):
-            # Try loading from the root of the results directory as a fallback
-            fallback_nc_path = os.path.join(self.visualizer_config.output_dir, f"wwte_{self.visualizer_config.wind_file_suffix}_combined.nc")
-            if os.path.exists(fallback_nc_path):
-                nc_path = fallback_nc_path
-            else:
-                raise FileNotFoundError(f"Climatology NetCDF file not found at: {nc_path} or {fallback_nc_path}")
-
-        rel_nc_path = os.path.relpath(nc_path, self.base_dir)
-        print(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
-        logger.info(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
-
         plotted_files = []
         out_format = str(self.config_data.get('climatology_format', 'nc')).lower()
 
+        import re
+        sink_slug = re.sub(r'[^A-Za-z0-9_-]+', '_', self.visualizer_config.sink_name.strip().lower())
+
         if out_format in ('nc', 'netcdf'):
+            # Try sink-specific filename first, then fallback to legacy name
+            nc_filename = f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_{sink_slug}_combined.nc"
+            nc_path = os.path.join(climatology_dir, nc_filename)
+
+            if not os.path.exists(nc_path):
+                legacy_nc = os.path.join(climatology_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_combined.nc")
+                fallback_nc_path = os.path.join(self.visualizer_config.output_dir, f"wwte_{self.visualizer_config.wind_file_suffix}_combined.nc")
+                if os.path.exists(legacy_nc):
+                    nc_path = legacy_nc
+                elif os.path.exists(fallback_nc_path):
+                    nc_path = fallback_nc_path
+                else:
+                    raise FileNotFoundError(f"Climatology NetCDF file not found at: {nc_path} or legacy/fallback locations")
+
+            rel_nc_path = os.path.relpath(nc_path, self.base_dir)
+            print(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
+            logger.info(f"[NETCDF LOAD] Reading combined monthly averages from: {rel_nc_path}")
+
             ds = xr.open_dataset(nc_path)
             lons = ds['lon'].values if 'lon' in ds.coords else ds['x'].values
             lats = ds['lat'].values if 'lat' in ds.coords else ds['y'].values
@@ -490,7 +539,10 @@ class WWTEVisualizerPipeline:
             for month in range(1, 13):
                 mm = f"{month:02d}"
                 # Prefer a single multi-band GeoTIFF per month
-                multi_path = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_{mm}.tif")
+                # Try sink-specific multi-band TIFF, then legacy name
+                multi_path = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_{sink_slug}_{mm}.tif")
+                if not os.path.exists(multi_path):
+                    multi_path = os.path.join(clim_dir, f"wwte_climatology_{self.visualizer_config.wind_file_suffix}_{mm}.tif")
                 if os.path.exists(multi_path):
                     with rasterio.open(multi_path) as src:
                         count = src.count
