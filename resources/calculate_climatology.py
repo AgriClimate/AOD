@@ -22,6 +22,7 @@
 
 import json
 import os
+import glob
 import xarray as xr
 import warnings
 
@@ -64,8 +65,24 @@ def main() -> None:
     print(f"Loading combined dataset: {os.path.basename(in_file)}")
     
     try:
-        ds = xr.open_dataset(in_file)
-        
+        # Prefer reading per-month files with open_mfdataset (more efficient for many files)
+        monthly_dir = os.path.join(base_dir, dirs['output'], 'monthly')
+        pattern = os.path.join(monthly_dir, f"wwte_{wind_file_suffix}_*.nc")
+        monthly_files = sorted(glob.glob(pattern))
+        if monthly_files:
+            print(f"Opening {len(monthly_files)} monthly files with xarray.open_mfdataset...")
+            ds = xr.open_mfdataset(
+                monthly_files,
+                combine='by_coords',
+                concat_dim='time',
+                coords='minimal',
+                compat='override',
+                parallel=False,
+            )
+        else:
+            print("Monthly files not found; falling back to combined file.")
+            ds = xr.open_dataset(in_file)
+
         # Calculate the long-term monthly climatology across the time dimension
         print(f"Calculating climatology for all 12 months using xarray groupby...")
         climatology = ds.groupby('time.month').mean(dim='time', skipna=True)
